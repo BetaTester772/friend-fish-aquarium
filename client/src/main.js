@@ -1,0 +1,182 @@
+import './styles.css';
+import { api, ApiError } from './api.js';
+import { track } from './analytics.js';
+import { createState } from './state.js';
+import { connectRealtime } from './realtime.js';
+import { createAquarium } from './scene/aquarium.js';
+import { createFishLabels } from './ui/labels.js';
+import { createFishCard } from './ui/fish-card.js';
+import { createActivityFeed } from './ui/activity-feed.js';
+import { createHud, promptForName } from './ui/hud.js';
+import { toast } from './ui/toast.js';
+
+/**
+ * Wires the tank together: load a snapshot, render it, keep it in sync, and
+ * route every interaction (click a fish, add a fish, feed a fish) through the
+ * shared state so the 3D scene, the name tags and the activity feed never
+ * disagree.
+ */
+async function main() {
+  const state = createState();
+
+  const snapshot = await loadTank();
+  if (!snapshot) return;
+  state.hydrate(snapshot);
+
+  track('tank_viewed', {
+    tank_id: snapshot.tank.id,
+    fish_count: snapshot.fish.length,
+    current_user_has_fish: Boolean(snapshot.viewer?.fishId),
+  });
+
+  const aquarium = createAquarium({
+    canvas: document.getElementById('tank-canvas'),
+  });
+  await aquarium.syncFish(snapshot.fish);
+
+  // The scene mirrors state; state is never derived from the scene.
+  state.on('fish', (fish) => aquarium.syncFish(fish));
+
+  // --------------------------------------------------------------- realtime
+
+  const realtime = connectRealtime({
+    state,
+    tankId: snapshot.tank.id,
+    heartbeatMs: snapshot.rules.presenceHeartbeatMs,
+  });
+
+  state.on('connection', (connection) => {
+    if (connection === 'reconnecting') {
+      toast('Lost the tank — reconnecting', { tone: 'warn', duration: 1800 });
+    }
+  });
+
+
+  createFishLabels({
+    container: document.getElementById('fish-labels'),
+    aquarium,
+    state,
+  });
+
+  createActivityFeed({
+    container: document.getElementById('activity'),
+    state,
+  });
+
+  const signIn = async () => {
+    const user = await promptForName({ state });
+    if (user) realtime.announce();
+    return user;
+  };
+
+  /** Shared entry point for the creator: sign in first if we don't know you. */
+  async function addFish() {
+    if (!state.get().viewer && !(await signIn())) return;
+
+    // The face detector and its model are only pulled once someone actually
+    // opens the creator — visitors who just come to look never download them.
+    const { openFishCreator } = await import('./creator/index.js');
+
+    const fish = await openFishCreator({
+      tankId: state.get().tank.id,
+      onCreated: (created) => {
+        state.upsertFish(created);
+        state.setViewer({ ...state.get().viewer, fishId: created.id });
+      },
+    });
+    if (fish) state.select(fish.id);
+  }
+
+  createFishCard({
+    state,
+    aquarium,
+    onRequestJoin: signIn,
+  });
+
+  createHud({
+    container: document.getElementById('hud'),
+    state,
+    onAddFish: addFish,
+    onSignIn: signIn,
+    onSignedOut: () => state.select(null),
+    onReload: () => realtime.resync(),
+  });
+
+  // ------------------------------------------------------------ pointer input
+
+  const canvas = aquarium.canvas;
+
+  canvas.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch') return; // no hover on touch
+    aquarium.setHovered(aquarium.fishIdAtPointer(event.clientX, event.clientY));
+  });
+
+  canvas.addEventListener('pointerdown', (event) => {
+    const fishId = aquarium.fishIdAtPointer(event.clientX, event.clientY);
+    // Clicking empty water dismisses the card; clicking a fish selects it.
+    state.select(fishId);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') state.select(null);
+  });
+
+  // Fullness decays continuously on the server. Re-pull every few minutes so a
+  // tab left open overnight doesn't show yesterday's bars (spec §6).
+  setInterval(() => {
+    if (!document.hidden) realtime.resync();
+  }, 5 * 60 * 1000);
+
+  if (state.get().viewer) realtime.announce();
+}
+
+/**
+ * Opens the tank named by `?tank=<inviteCode>`, falling back to the shared
+ * default tank (spec AC-01: the link alone is enough to see the fish).
+ */
+async function loadTank() {
+  const inviteCode = new URLSearchParams(location.search).get('tank');
+  try {
+    return inviteCode ? await api.tankByInvite(inviteCode) : await api.defaultTank();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      showFatal('That tank link does not exist (any more).');
+    } else {
+      showFatal('Could not reach the tank. Is the server running?');
+    }
+    return null;
+  }
+}
+
+function showFatal(message) {
+  const banner = document.createElement('div');
+  banner.className = 'modal-backdrop';
+  banner.innerHTML = '<div class="modal"></div>';
+  const dialog = banner.firstElementChild;
+
+  const title = document.createElement('h2');
+  title.className = 'modal__title';
+  title.textContent = 'The tank is closed';
+
+  const body = document.createElement('p');
+  body.className = 'modal__body';
+  body.textContent = message;
+
+  const retry = document.createElement('button');
+  retry.className = 'btn btn--primary';
+  retry.type = 'button';
+  retry.textContent = 'Reload';
+  retry.addEventListener('click', () => location.reload());
+
+  const actions = document.createElement('div');
+  actions.className = 'modal__actions';
+  actions.append(retry);
+
+  dialog.append(title, body, actions);
+  document.getElementById('modal-root').append(banner);
+}
+
+main().catch((err) => {
+  console.error(err);
+  showFatal('Something went wrong setting up the tank.');
+});

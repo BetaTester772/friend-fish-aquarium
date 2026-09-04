@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="A shared tank where your friends are fish. Check in on them. Feed them."
+    />
+    <title>friend fish aquarium</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🐟</text></svg>" />
+  </head>
+  <body>
+    <!-- The 3D tank. Everything else floats on top of it. -->
+    <canvas id="tank-canvas" aria-hidden="true"></canvas>
+
+    <!--
+      Name + status-bar tags for each fish, projected from 3D each frame.
+      They are real buttons so the tank is operable by keyboard and touch
+      (spec §12), not only by clicking the mesh.
+    -->
+    <div id="fish-labels" class="fish-labels"></div>
+
+    <div id="hud" class="hud"></div>
+    <aside id="activity" class="activity" aria-label="Activity"></aside>
+    <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+    <div id="modal-root"></div>
+
+    <noscript>
+      <p class="noscript">
+        friend fish aquarium needs JavaScript to render the tank.
+      </p>
+    </noscript>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
