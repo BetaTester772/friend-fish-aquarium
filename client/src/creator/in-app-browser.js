@@ -2,15 +2,14 @@
  * In-app browser detection, and a way out of one.
  *
  * A link dropped in a chat opens inside that app's own browser, and on Android
- * those are WebViews whose host app has to forward the camera permission
- * (`WebChromeClient.onPermissionRequest`). Most never implement it, so
- * `getUserMedia` is either missing outright or rejects with NotAllowedError no
- * matter how many times the visitor taps allow. Since the invite link is meant
- * to be pasted into a group chat, this is the single most likely reason someone
- * says the camera "doesn't work".
+ * those are WebViews whose host app has to forward the camera permission via
+ * `WebChromeClient.onPermissionRequest`.
  *
- * User-agent sniffing is brittle, so nothing here blocks anyone: a match only
- * adds a shortcut out, and "try anyway" is always available.
+ * Plenty of them do. Our own analytics show KakaoTalk 26.7 on Android 16
+ * granting the camera and detecting faces without complaint, so being in one of
+ * these is NOT a reason to warn anybody up front — that would push working
+ * visitors out of a browser that works. This is only ever offered as one
+ * possible remedy *after* the camera has actually failed.
  */
 const IN_APP_BROWSERS = [
   [/KAKAOTALK/i, 'KakaoTalk'],
@@ -24,6 +23,9 @@ const IN_APP_BROWSERS = [
 ];
 
 export const isAndroid = () => /Android/i.test(navigator.userAgent);
+
+/** No touch and not a known mobile OS: treat as a desktop for advice purposes. */
+export const isDesktop = () => !isAndroid() && !isIos();
 
 export const isIos = () =>
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||

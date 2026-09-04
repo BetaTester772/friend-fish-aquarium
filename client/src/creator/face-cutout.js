@@ -1,4 +1,5 @@
-import { boundsOf, faceOvalIndices } from './face-detector.js';
+import { faceOvalIndices } from './face-detector.js';
+import { boundsOf } from './framing.js';
 
 /**
  * Turns one video frame plus its landmarks into the face asset the fish wears
