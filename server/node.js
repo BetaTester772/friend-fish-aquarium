@@ -171,12 +171,12 @@ async function serveStatic(url) {
   for (const base of [distDir, publicDir]) {
     const file = safeJoin(base, url.pathname);
     if (file && fs.existsSync(file) && fs.statSync(file).isFile()) {
-      return fileResponse(file);
+      return fileResponse(file, url.pathname);
     }
   }
 
   const index = path.join(distDir, 'index.html');
-  if (fs.existsSync(index)) return fileResponse(index);
+  if (fs.existsSync(index)) return fileResponse(index, '/index.html');
 
   return new Response(
     'Client not built yet — run `npm run build`, or use `npm run dev` for the Vite dev server.',
@@ -184,9 +184,33 @@ async function serveStatic(url) {
   );
 }
 
-function fileResponse(file) {
+/**
+ * Caching, which decides whether a deploy actually reaches anyone.
+ *
+ * Vite fingerprints everything under /assets/, so those can be kept forever —
+ * a new build produces new names. `index.html` is the opposite: it is the one
+ * file that names the current bundles, so it must be revalidated every time.
+ * Without a header here browsers cache it heuristically, and someone who has
+ * already visited keeps loading yesterday's build no matter what is deployed.
+ */
+function cacheControlFor(pathname) {
+  if (pathname.startsWith('/assets/')) {
+    return 'public, max-age=31536000, immutable';
+  }
+  // The vendored model and wasm keep fixed names, so they get a bounded life
+  // rather than an unbounded one — 3.6MB is worth caching, but not forever.
+  if (pathname.startsWith('/models/') || pathname.startsWith('/mediapipe-wasm/')) {
+    return 'public, max-age=604800';
+  }
+  return 'no-cache';
+}
+
+function fileResponse(file, pathname) {
   return new Response(Readable.toWeb(fs.createReadStream(file)), {
-    headers: { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' },
+    headers: {
+      'content-type': MIME[path.extname(file)] ?? 'application/octet-stream',
+      'cache-control': cacheControlFor(pathname),
+    },
   });
 }
 
