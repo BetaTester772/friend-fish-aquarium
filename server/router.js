@@ -9,6 +9,7 @@ import {
   hasPassed,
   isOpenPath,
   passphraseMatches,
+  tokenMatches,
 } from './gate.js';
 import { ACTIVITY_TYPES } from '../shared/activity-text.js';
 import {
@@ -91,6 +92,12 @@ export function createRouter({ store, realtime, random = Math.random }) {
           }
         : null,
       rules: publicRules(),
+      // Only reachable once the gate has already been passed, so this tells the
+      // holder nothing they do not have. It lets the invite link they copy work
+      // on one click instead of dumping a friend at a passphrase prompt.
+      gate: gateEnabled()
+        ? { enabled: true, shareKey: await gateToken() }
+        : { enabled: false, shareKey: null },
     };
   }
 
@@ -162,11 +169,18 @@ export function createRouter({ store, realtime, random = Math.random }) {
       });
     })],
 
-    /** Exchange the shared passphrase for a gate cookie (see server/gate.js). */
+    /**
+     * Exchange the shared passphrase — or a share token from an invite link —
+     * for a gate cookie (see server/gate.js).
+     */
     ['POST', '/api/gate', async ({ request, body }) => {
       if (!gateEnabled()) return json({ ok: true, gate: 'disabled' });
 
-      if (await passphraseMatches(body?.passphrase)) {
+      const accepted =
+        (await tokenMatches(body?.token)) ||
+        (await passphraseMatches(body?.passphrase));
+
+      if (accepted) {
         return json({ ok: true }, 200, {
           'set-cookie': gateCookie(request, await gateToken()),
         });

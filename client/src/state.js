@@ -7,6 +7,7 @@ export function createState(initial = {}) {
   let state = {
     tank: null,
     rules: null,
+    gate: null,
     viewer: null,
     fish: [],
     members: [],
@@ -38,6 +39,7 @@ export function createState(initial = {}) {
         ...state,
         tank: snapshot.tank,
         rules: snapshot.rules,
+        gate: snapshot.gate,
         viewer: snapshot.viewer,
         fish: snapshot.fish,
         members: snapshot.members,

@@ -65,6 +65,17 @@ export async function hasPassed(request) {
   return constantTimeEqual(presented, await gateToken());
 }
 
+/**
+ * Is this a valid share token? The token is the same value as the cookie, so a
+ * link carrying it grants exactly the access a typed passphrase does — but it
+ * never reveals the passphrase itself, and rotating the passphrase kills every
+ * outstanding link along with every cookie.
+ */
+export async function tokenMatches(candidate) {
+  if (typeof candidate !== 'string' || candidate.length === 0) return false;
+  return constantTimeEqual(candidate, await gateToken());
+}
+
 /** Is this the right passphrase? Compared as hashes, so length never leaks. */
 export async function passphraseMatches(candidate) {
   if (typeof candidate !== 'string' || candidate.length === 0) return false;

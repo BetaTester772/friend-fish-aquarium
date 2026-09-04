@@ -12,7 +12,7 @@ const PASSPHRASE = 'a-decent-shared-passphrase';
 process.env.FFA_PASSPHRASE = PASSPHRASE;
 
 const { createNodeApp } = await import('../server/node.js');
-const { assertUsablePassphrase } = await import('../server/gate.js');
+const { assertUsablePassphrase, gateToken } = await import('../server/gate.js');
 const { config } = await import('../server/config.js');
 
 let server;
@@ -117,6 +117,43 @@ test('an empty or missing passphrase is not treated as a match', async () => {
     });
     assert.equal(res.status, 403, JSON.stringify(candidate));
   }
+});
+
+test('a share token from an invite link is accepted', async () => {
+  const token = await gateToken();
+
+  const res = await fetch(`${base}/api/gate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  assert.equal(res.status, 200);
+
+  const cookie = res.headers.get('set-cookie').split(';')[0];
+  assert.equal((await get('/api/tanks/default', cookie)).status, 200);
+});
+
+test('a wrong share token is refused', async () => {
+  const res = await fetch(`${base}/api/gate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: 'f'.repeat(64) }),
+  });
+  assert.equal(res.status, 403);
+});
+
+test('the share token reaches admitted viewers, and only them', async () => {
+  // Nobody gets it before passing the gate — the snapshot is 401 until then.
+  assert.equal((await get('/api/tanks/default')).status, 401);
+
+  const { cookie } = await unlock(PASSPHRASE);
+  const snapshot = await (await get('/api/tanks/default', cookie)).json();
+
+  assert.equal(snapshot.gate.enabled, true);
+  assert.equal(snapshot.gate.shareKey, await gateToken());
+  // The link carries the token, never the passphrase itself.
+  assert.notEqual(snapshot.gate.shareKey, PASSPHRASE);
+  assert.ok(!JSON.stringify(snapshot).includes(PASSPHRASE));
 });
 
 test('startup refuses a passphrase short enough to guess', () => {

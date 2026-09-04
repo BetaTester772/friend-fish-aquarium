@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { openModal, confirmModal, el } from './modal.js';
+import { inviteLink } from './gate.js';
 import { toast } from './toast.js';
 
 /**
@@ -50,16 +51,21 @@ export function createHud({
 
   function openMenu() {
     closeMenu();
-    const { viewer, tank } = state.get();
+    const { viewer, tank, gate } = state.get();
 
     menu = el('div', 'menu');
     menu.setAttribute('role', 'menu');
 
-    const inviteUrl = `${location.origin}/?tank=${tank?.inviteCode ?? ''}`;
+    // Carries the share token when the tank is private, so whoever receives it
+    // is one click from the fish rather than one passphrase from a wall.
+    const inviteUrl = inviteLink({
+      inviteCode: tank?.inviteCode,
+      shareKey: gate?.shareKey,
+    });
 
     menu.append(
       el('div', 'menu__note', `Signed in as ${viewer.displayName}`),
-      menuItem('Copy invite link', async () => {
+      menuItem(gate?.enabled ? 'Copy invite link (lets them in)' : 'Copy invite link', async () => {
         try {
           await navigator.clipboard.writeText(inviteUrl);
           toast('Invite link copied', { tone: 'good' });
