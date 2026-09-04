@@ -626,7 +626,13 @@ button {
   transform: scaleX(-1);
 }
 
+/*
+ * The overlay must be cropped exactly like the video underneath it, or the mesh
+ * lands somewhere other than the face: the video is `cover`, so a canvas left at
+ * the default `fill` gets stretched by a different factor on each axis.
+ */
 .creator__overlay {
+  object-fit: cover;
   pointer-events: none;
 }
 

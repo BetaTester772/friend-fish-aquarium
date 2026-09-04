@@ -4,16 +4,20 @@ import { openModal, el } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { randomLook } from '../../../shared/fish-variants.js';
 import {
+  activeDelegate,
   drawFaceMesh,
-  framingHint,
   loadFaceLandmarker,
   primaryFace,
 } from './face-detector.js';
+import { createHoldTimer, framingHint, HOLD_MS } from './framing.js';
+import {
+  androidChromeUrl,
+  canJumpToRealBrowser,
+  inAppBrowser,
+  isDesktop,
+} from './in-app-browser.js';
 import { cutOutFace } from './face-cutout.js';
 import { createFishPreview } from './preview-scene.js';
-
-/** Consecutive good frames before we capture on our own. */
-const STABLE_FRAMES = 22;
 
 /**
  * "Add your fish": consent -> camera -> face mesh -> preview -> Add to tank
@@ -22,7 +26,7 @@ const STABLE_FRAMES = 22;
  * The camera stream is torn down the instant it is no longer needed — after a
  * capture, on cancel, and on any error path (spec §9 step 9).
  */
-export function openFishCreator({ tankId, onCreated }) {
+export function openFishCreator({ tankId, shareUrl, onCreated }) {
   track('add_fish_clicked', { tank_id: tankId });
 
   return openModal({
@@ -108,6 +112,53 @@ export function openFishCreator({ tankId, onCreated }) {
         );
       }
 
+      /**
+       * The way out of an in-app browser. Shown before the camera is requested,
+       * because inside one the request usually fails no matter what the visitor
+       * taps.
+       */
+      function escapeHatch(appName) {
+        const box = el('p', 'modal__error');
+        box.append(
+          el(
+            'span',
+            null,
+            `You are in ${appName}'s built-in browser. Some of them do not pass ` +
+              'the camera through — opening this page in Chrome is worth a try.',
+          ),
+        );
+
+        // Carries the share token, so the visitor lands inside the tank rather
+        // than at the passphrase prompt.
+        const target = shareUrl ?? location.href;
+
+        const row = el('div', 'modal__actions');
+        row.style.justifyContent = 'flex-start';
+        row.style.marginTop = '8px';
+
+        if (canJumpToRealBrowser()) {
+          const jump = el('a', 'btn btn--primary btn--small', 'Open in Chrome');
+          jump.href = androidChromeUrl(target);
+          jump.addEventListener('click', () => track('in_app_browser_escape', { app: appName }));
+          row.append(jump);
+        }
+
+        const copy = el('button', 'btn btn--ghost btn--small', 'Copy the link');
+        copy.type = 'button';
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(target);
+            copy.textContent = 'Copied — paste it in Chrome';
+          } catch {
+            window.prompt('Copy this link into Chrome', target);
+          }
+        });
+        row.append(copy);
+
+        box.append(row);
+        return box;
+      }
+
       // -------------------------------------------------------- stage: camera
 
       async function startCamera() {
@@ -128,8 +179,12 @@ export function openFishCreator({ tankId, onCreated }) {
           state.stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: 'user',
-              width: { ideal: 960 },
-              height: { ideal: 720 },
+              // No width/height here on purpose. Asking for 960x720 forced a
+              // landscape stream, which a portrait phone then cover-cropped by
+              // nearly half — the face looked fine on screen but measured tiny
+              // against the frame the detector actually sees.
+              width: { ideal: 1280 },
+              aspectRatio: { ideal: window.innerHeight > window.innerWidth ? 3 / 4 : 4 / 3 },
             },
             audio: false,
           });
@@ -140,23 +195,79 @@ export function openFishCreator({ tankId, onCreated }) {
         } catch (err) {
           track('camera_permission_result', {
             result: 'denied',
+            error: err?.name ?? 'unknown',
+            message: String(err?.message ?? '').slice(0, 120),
+            in_app: inAppBrowser() ?? 'no',
             browser: navigator.userAgent,
           });
           renderPermissionDenied(err);
           return;
         }
 
+        // Attach and explicitly start playback. `autoplay` alone is not enough:
+        // Safari on iOS refuses it in Low Power Mode, and by this point the
+        // user's click has been through two awaits so the gesture context is
+        // gone. Without this the video stays black, readyState never reaches 2,
+        // and the loop below spins forever on "Starting camera…".
+        state.video.srcObject = state.stream;
+        try {
+          await state.video.play();
+        } catch (err) {
+          track('camera_playback_blocked', { browser: navigator.userAgent });
+          renderTapToStart();
+          return;
+        }
+
         try {
           state.landmarker = await loadFaceLandmarker();
-        } catch {
+        } catch (err) {
+          track('face_detector_failed', {
+            browser: navigator.userAgent,
+            message: String(err?.message ?? err).slice(0, 200),
+          });
           stopCamera();
           renderConsent(
-            'The face detector failed to load. Check your connection and try again.',
+            'The face detector would not start on this device. ' +
+              'Try a different browser, or ask for a hand.',
           );
           return;
         }
 
+        track('face_detector_ready', { delegate: activeDelegate });
         runDetectionLoop();
+      }
+
+      /**
+       * Playback was refused — almost always iOS Low Power Mode. One tap, this
+       * time inside a real gesture, generally fixes it.
+       */
+      function renderTapToStart() {
+        const start = el('button', 'btn btn--primary', 'Tap to start the camera');
+        start.type = 'button';
+        start.addEventListener('click', async () => {
+          try {
+            await state.video.play();
+          } catch {
+            return;
+          }
+          try {
+            state.landmarker = await loadFaceLandmarker();
+          } catch {
+            stopCamera();
+            renderConsent('The face detector would not start on this device.');
+            return;
+          }
+          state.hint.textContent = 'Center your face in the frame.';
+          runDetectionLoop();
+        });
+
+        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        cancelBtn.type = 'button';
+        cancelBtn.addEventListener('click', cancel);
+
+        const actions = state.video.closest('.modal').querySelector('.modal__actions');
+        actions.replaceChildren(cancelBtn, start);
+        state.hint.textContent = 'Your browser paused the camera.';
       }
 
       function renderCameraShell(hintText) {
@@ -216,19 +327,53 @@ export function openFishCreator({ tankId, onCreated }) {
         const actions = el('div', 'modal__actions');
         actions.append(cancelBtn, retry);
 
-        const blocked = err?.name === 'NotAllowedError';
+        // Every failure used to read the same, which is exactly why "denied"
+        // told us nothing. Each of these has a different fix.
+        const reason = err?.name;
+        const trapped = inAppBrowser();
+
+        const advice = [];
+        if (reason === 'NotFoundError' || reason === 'OverconstrainedError') {
+          advice.push('This device has no camera the browser can see.');
+          if (isDesktop()) {
+            advice.push('If you have a webcam plugged in, check it is connected.');
+          }
+        } else if (reason === 'NotReadableError' || reason === 'TrackStartError') {
+          advice.push(
+            'Another app is holding the camera. Close Zoom, Teams, Meet or ' +
+              'whatever else might have it open, then try again.',
+          );
+        } else if (isDesktop()) {
+          // The Windows case we actually saw: ten straight denials from one
+          // desktop Chrome. Both causes look identical to the page.
+          advice.push(
+            'Chrome is refusing the camera for this site. Click the camera or ' +
+              'lock icon at the left of the address bar and set Camera to Allow, ' +
+              'then reload.',
+          );
+          advice.push(
+            'If that is already allowed, Windows itself may be blocking it: ' +
+              'Settings → Privacy & security → Camera, and turn on both ' +
+              '"Camera access" and "Let desktop apps access your camera".',
+          );
+        } else {
+          advice.push(
+            'Your browser is refusing the camera for this site. Allow it in ' +
+              'the site settings, then try again.',
+          );
+        }
+
         dialog.append(
-          el('h2', 'modal__title', 'We need the camera'),
+          el('h2', 'modal__title', 'We could not open the camera'),
+          ...advice.map((line) => el('p', 'modal__body', line)),
           el(
             'p',
             'modal__body',
-            blocked
-              ? 'The camera is blocked for this site. Allow it in your browser’s ' +
-                  'address bar or site settings, then try again. The video stays ' +
-                  'on your device — we only keep the cropped face.'
-              : 'No camera was available. Check that nothing else is using it, ' +
-                  'then try again.',
+            'The video stays on your device either way — only the cropped face ' +
+              'is ever saved.',
           ),
+          // Offered, not asserted: some of these browsers work fine.
+          ...(trapped ? [escapeHatch(trapped)] : []),
           actions,
         );
       }
@@ -237,9 +382,11 @@ export function openFishCreator({ tankId, onCreated }) {
 
       function runDetectionLoop() {
         const { video, overlay, hint, captureBtn } = state;
-        video.srcObject = state.stream;
 
-        let stable = 0;
+        // Times, not frame counts, so a slow phone behaves like a fast laptop.
+        const hold = createHoldTimer();
+        let stalled = false;
+        const loopStarted = performance.now();
         let attempts = 0;
         let lastTimestamp = -1;
         const detectStarted = performance.now();
@@ -247,7 +394,19 @@ export function openFishCreator({ tankId, onCreated }) {
 
         const tick = () => {
           state.rafId = requestAnimationFrame(tick);
-          if (video.readyState < 2 || !state.landmarker) return;
+
+          if (video.readyState < 2 || !state.landmarker) {
+            // A camera that never delivers a frame used to leave the user
+            // staring at "Starting camera…" with nothing to act on. Say so
+            // instead of spinning silently.
+            if (!stalled && performance.now() - loopStarted > 6000) {
+              stalled = true;
+              track('camera_stalled', { browser: navigator.userAgent });
+              setHint('The camera is not sending a picture. Try reopening this.');
+            }
+            return;
+          }
+          stalled = false;
 
           if (overlay.width !== video.videoWidth) {
             overlay.width = video.videoWidth;
@@ -274,7 +433,7 @@ export function openFishCreator({ tankId, onCreated }) {
           attempts += 1;
 
           if (!landmarks) {
-            stable = 0;
+            hold.bad(timestamp);
             captureBtn.disabled = true;
             setHint('Center your face in the frame.');
             return;
@@ -288,12 +447,19 @@ export function openFishCreator({ tankId, onCreated }) {
             });
           }
 
-          drawFaceMesh(ctx, landmarks);
+          // Screen pixels per bitmap pixel, matching the CSS `object-fit:
+          // cover`. Without it the strokes vanish on a high-resolution camera.
+          const coverScale =
+            Math.max(
+              overlay.clientWidth / overlay.width,
+              overlay.clientHeight / overlay.height,
+            ) || 1;
+          drawFaceMesh(ctx, landmarks, coverScale);
           state.landmarks = landmarks;
 
           const problem = framingHint(landmarks, result.faceLandmarks.length);
           if (problem) {
-            stable = 0;
+            hold.bad(timestamp);
             // "Too many faces" is a warning, not a blocker — we already picked
             // the biggest one, so let them shoot it manually if they want.
             const crowded = result.faceLandmarks.length > 1;
@@ -302,16 +468,19 @@ export function openFishCreator({ tankId, onCreated }) {
             return;
           }
 
+          // A good frame: the face is usable right now, so the manual button
+          // works even if the hold never completes.
           captureBtn.disabled = false;
-          stable += 1;
-          setHint(
-            stable >= STABLE_FRAMES ? 'Got it!' : 'Hold still…',
-            stable >= STABLE_FRAMES ? 'ready' : undefined,
-          );
+          hold.good(timestamp);
 
-          // Auto-capture only once the face has been steady and well framed;
-          // never on an empty frame (spec S3 / §10).
-          if (stable >= STABLE_FRAMES) takeShot();
+          if (hold.isComplete(timestamp)) {
+            setHint('Got it!', 'ready');
+            takeShot(); // never on an empty frame (spec S3 / §10)
+            return;
+          }
+          // Show the countdown, so a hold that is not completing looks like
+          // something the user can influence rather than a dead screen.
+          setHint(`Hold still… ${Math.ceil(hold.remaining(timestamp) / 300)}`);
         };
 
         function setHint(text, tone) {

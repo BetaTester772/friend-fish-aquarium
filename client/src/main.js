@@ -9,7 +9,7 @@ import { createFishCard } from './ui/fish-card.js';
 import { createActivityFeed } from './ui/activity-feed.js';
 import { createHud, promptForName } from './ui/hud.js';
 import { toast } from './ui/toast.js';
-import { promptForPassphrase, unlockFromLink } from './ui/gate.js';
+import { promptForPassphrase, unlockFromLink, inviteLink } from './ui/gate.js';
 
 /**
  * Wires the tank together: load a snapshot, render it, keep it in sync, and
@@ -34,9 +34,22 @@ async function main() {
     current_user_has_fish: Boolean(snapshot.viewer?.fishId),
   });
 
-  const aquarium = createAquarium({
-    canvas: document.getElementById('tank-canvas'),
-  });
+  // A tank with no WebGL is not a degraded tank, it is a blank page — three.js
+  // throws on context creation and takes the HUD down with it. Catch it here
+  // and say what happened, rather than leaving someone staring at empty blue.
+  let aquarium;
+  try {
+    aquarium = createAquarium({ canvas: document.getElementById('tank-canvas') });
+  } catch (err) {
+    console.error(err);
+    track('webgl_unavailable', { browser: navigator.userAgent });
+    showFatal(
+      'This browser cannot draw the tank — it has no WebGL. Turn on hardware ' +
+        'acceleration in your browser settings, or open the tank on another ' +
+        'device.',
+    );
+    return;
+  }
   await aquarium.syncFish(snapshot.fish);
 
   // The scene mirrors state; state is never derived from the scene.
@@ -84,6 +97,12 @@ async function main() {
 
     const fish = await openFishCreator({
       tankId: state.get().tank.id,
+      // Handed to the "open in Chrome" escape hatch, so a visitor stuck in a
+      // chat app's browser lands back inside the tank, not at the prompt.
+      shareUrl: inviteLink({
+        inviteCode: state.get().tank.inviteCode,
+        shareKey: state.get().gate?.shareKey,
+      }),
       onCreated: (created) => {
         state.upsertFish(created);
         state.setViewer({ ...state.get().viewer, fishId: created.id });

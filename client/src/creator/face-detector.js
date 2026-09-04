@@ -1,4 +1,5 @@
 import { DrawingUtils, FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
+import { boundsOf } from './framing.js';
 
 /**
  * MediaPipe Face Landmarker (spec FR-006, §9).
@@ -10,19 +11,42 @@ import { DrawingUtils, FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-
  */
 let landmarkerPromise = null;
 
+/** Which delegate we ended up on, for the analytics event. */
+export let activeDelegate = null;
+
+function createWith(fileset, delegate) {
+  return FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: '/models/face_landmarker.task',
+      delegate,
+    },
+    runningMode: 'VIDEO',
+    numFaces: 2, // enough to notice a second person in frame
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  });
+}
+
+/**
+ * The GPU delegate needs working WebGL2. Plenty of real devices do not have it
+ * — older Android, a browser with hardware acceleration switched off, a locked
+ * down Firefox — and there the GPU path throws on creation. Falling back to CPU
+ * is slower but it works, which beats telling someone their browser is not good
+ * enough.
+ */
 export function loadFaceLandmarker() {
   landmarkerPromise ??= (async () => {
     const fileset = await FilesetResolver.forVisionTasks('/mediapipe-wasm');
-    return FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath: '/models/face_landmarker.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numFaces: 2, // enough to notice a second person in frame
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-    });
+    try {
+      const landmarker = await createWith(fileset, 'GPU');
+      activeDelegate = 'GPU';
+      return landmarker;
+    } catch (err) {
+      console.warn('[ffa] GPU face detection unavailable, falling back to CPU', err);
+      const landmarker = await createWith(fileset, 'CPU');
+      activeDelegate = 'CPU';
+      return landmarker;
+    }
   })().catch((err) => {
     landmarkerPromise = null; // let a retry re-attempt the load
     throw err;
@@ -49,16 +73,27 @@ export function faceOvalIndices() {
 /**
  * Draws the wireframe mesh over the live preview — the visual cue from the Reel
  * that tells the user the app has actually found their face (spec S3).
+ *
+ * Line widths are in canvas-bitmap pixels, and the bitmap is the camera's full
+ * resolution while the element is only as wide as the phone. At 1280 bitmap
+ * pixels shown across 390 CSS pixels, a 0.6px line renders as 0.18px — which is
+ * to say, invisible, which is exactly what people reported. `coverScale` is the
+ * screen pixels per bitmap pixel, so dividing by it keeps the strokes a fixed
+ * width on screen no matter the camera resolution.
+ *
+ * @param {number} coverScale screen px per bitmap px, from the cover fit
  */
-export function drawFaceMesh(ctx, landmarks) {
+export function drawFaceMesh(ctx, landmarks, coverScale = 1) {
+  const px = (cssPixels) => cssPixels / (coverScale || 1);
   const utils = new DrawingUtils(ctx);
+
   utils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
-    color: 'rgba(255, 255, 255, 0.34)',
-    lineWidth: 0.6,
+    color: 'rgba(255, 255, 255, 0.4)',
+    lineWidth: px(0.7),
   });
   utils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_FACE_OVAL, {
     color: 'rgba(120, 231, 255, 0.95)',
-    lineWidth: 2.5,
+    lineWidth: px(3),
   });
 }
 
@@ -81,35 +116,4 @@ export function primaryFace(faceLandmarks) {
   return best;
 }
 
-export function boundsOf(landmarks) {
-  let minX = 1;
-  let minY = 1;
-  let maxX = 0;
-  let maxY = 0;
-  for (const point of landmarks) {
-    if (point.x < minX) minX = point.x;
-    if (point.y < minY) minY = point.y;
-    if (point.x > maxX) maxX = point.x;
-    if (point.y > maxY) maxY = point.y;
-  }
-  return { minX, minY, maxX, maxY };
-}
 
-/**
- * Is the face usable? Too small means "come closer", off the edge means the
- * cutout would be clipped. Returns a hint string when it isn't (spec §10).
- */
-export function framingHint(landmarks, faceCount) {
-  if (faceCount > 1) return 'Just one face please — using the closest one.';
-
-  const { minX, minY, maxX, maxY } = boundsOf(landmarks);
-  const width = maxX - minX;
-  const height = maxY - minY;
-
-  if (width < 0.18 || height < 0.22) return 'Come a bit closer.';
-  if (width > 0.92 || height > 0.96) return 'A little further back.';
-  if (minX < 0.02 || maxX > 0.98 || minY < 0.02 || maxY > 0.98) {
-    return 'Center your face in the frame.';
-  }
-  return null;
-}
