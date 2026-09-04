@@ -34,26 +34,35 @@ is why development works without a certificate. Plan on a domain name.
 obtains and renews a Let's Encrypt certificate on its own.
 
 ```sh
-export FFA_DOMAIN=tank.example.com     # must already point at this host
-export FFA_EMAIL=you@example.com       # for certificate expiry notices
+cp .env.example .env      # then set FFA_EMAIL and FFA_PASSPHRASE
 docker compose up -d --build
 
 # put the demo fish in, if you want them
 docker compose exec app node scripts/seed.js
 ```
 
+`.env` is gitignored on purpose: this repository is public, and an address or a
+passphrase committed to it is no longer either. `FFA_DOMAIN` defaults to the
+deployed hostname; `FFA_EMAIL` and `FFA_PASSPHRASE` have no defaults, so compose
+fails fast with a readable message rather than starting an unprotected tank.
+
 Ports 80 and 443 must be reachable from the internet for the certificate
-challenge to succeed.
+challenge to succeed, and the hostname must already resolve to the host.
 
 ### Without Docker
 
 ```sh
 npm ci
 npm run build
-FFA_DATA_DIR=/var/lib/friend-fish-aquarium FFA_TRUST_PROXY=1 npm start
+FFA_DATA_DIR=/var/lib/friend-fish-aquarium \
+  FFA_TRUST_PROXY=1 \
+  FFA_PASSPHRASE='something you can say out loud' \
+  npm start
 ```
 
-`deploy/friend-fish-aquarium.service` is a systemd unit for this. Put a
+`deploy/friend-fish-aquarium.service` is a systemd unit for this; it reads the
+passphrase from `/etc/friend-fish-aquarium.env` (`chmod 600`) rather than from
+the unit file, which is world-readable. Put a
 TLS-terminating reverse proxy in front of it either way; `deploy/Caddyfile` is
 a working example, and the one setting that matters for any proxy is that
 **`/api/tanks/*/events` must not be buffered** — it is a Server-Sent Events
@@ -68,6 +77,35 @@ location.
 | `PORT` | `8787` | |
 | `FFA_DATA_DIR` | `./data` | Holds `aquarium.db`. The only thing to back up. |
 | `FFA_TRUST_PROXY` | unset | Set to `1` **only** when a reverse proxy you control is definitely in front. It makes the app believe `X-Forwarded-Proto`, which anyone can send — without a proxy to overwrite it, that would let a client talk the app out of marking the session cookie `Secure`. |
+| `FFA_PASSPHRASE` | unset | The shared passphrase for the tank. Unset means an open tank. See below. |
+
+### Who can get in
+
+A hostname stops being a secret the moment a certificate is issued for it —
+Certificate Transparency logs are public and scanners read them within minutes.
+So "nobody knows the URL" is not access control, and an open tank means any
+passer-by can see your friends' faces and upload their own.
+
+`FFA_PASSPHRASE` gates the whole tank behind one shared passphrase. It covers
+reads, not just writes, because seeing the tank *is* seeing everyone's face.
+Anyone with the passphrase is in; there are no per-person accounts, which suits
+a group who will read it out over a chat thread.
+
+- Minimum 8 characters. The server refuses to start with less rather than
+  quietly protecting nothing.
+- The gate cookie is an HMAC of a fixed message keyed by the passphrase, so
+  there is no second secret to manage, cookies survive restarts, and changing
+  the passphrase logs everybody out at once.
+- A wrong guess costs a fixed 300ms, which holds guessing to a few attempts a
+  second without any per-IP bookkeeping (behind a proxy that would mean trusting
+  a header anyone can forge).
+- `/api/health` stays open so the healthcheck works, and the page itself still
+  loads — otherwise there would be nothing to render the prompt in.
+
+This is a shared passphrase, not authentication: it keeps strangers out, and it
+does not stop someone who has it from passing it on. For a friend group that is
+the right trade; if you ever need more, the invite-code plumbing
+(`?tank=<code>`) is already in the data model.
 
 Game rules (fullness decay, feed amount, cooldowns, the ignore chance) all live
 in `server/config.js` and are meant to be tuned.
