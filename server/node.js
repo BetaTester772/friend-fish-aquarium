@@ -7,6 +7,7 @@ import { createRouter, isApiPath, json } from './router.js';
 import { createStore } from './store.js';
 import { createLocalRealtime } from './sse.js';
 import { openSqlite } from './sqlite.js';
+import { assertUsablePassphrase } from './gate.js';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = path.join(rootDir, 'dist');
@@ -43,6 +44,16 @@ export function createNodeApp({ file, now, random } = {}) {
 }
 
 export async function startServer({ port = Number(process.env.PORT) || 8787 } = {}) {
+  // Fail before binding a port rather than serving an unprotected tank. This is
+  // an operator mistake, not a crash, so report it as one line and stop.
+  let gate;
+  try {
+    gate = assertUsablePassphrase();
+  } catch (err) {
+    console.error(`[ffa] ${err.message}`);
+    process.exit(1);
+  }
+
   const app = createNodeApp();
 
   // Make sure the shared tank exists before the first request arrives.
@@ -54,6 +65,11 @@ export async function startServer({ port = Number(process.env.PORT) || 8787 } = 
   app.server.listen(port, () => {
     console.log(`friend fish aquarium listening on http://localhost:${port}`);
     console.log(`tank invite code: ${tank.invite_code}`);
+    console.log(
+      gate.enabled
+        ? 'passphrase required (FFA_PASSPHRASE is set)'
+        : 'OPEN TANK — anyone who finds the URL can join. Set FFA_PASSPHRASE to gate it.',
+    );
   });
 
   const shutdown = () => {

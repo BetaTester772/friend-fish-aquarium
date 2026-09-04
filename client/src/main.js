@@ -9,6 +9,7 @@ import { createFishCard } from './ui/fish-card.js';
 import { createActivityFeed } from './ui/activity-feed.js';
 import { createHud, promptForName } from './ui/hud.js';
 import { toast } from './ui/toast.js';
+import { promptForPassphrase } from './ui/gate.js';
 
 /**
  * Wires the tank together: load a snapshot, render it, keep it in sync, and
@@ -136,9 +137,18 @@ async function main() {
  */
 async function loadTank() {
   const inviteCode = new URLSearchParams(location.search).get('tank');
+  const fetchTank = () =>
+    inviteCode ? api.tankByInvite(inviteCode) : api.defaultTank();
+
   try {
-    return inviteCode ? await api.tankByInvite(inviteCode) : await api.defaultTank();
+    return await fetchTank();
   } catch (err) {
+    // A private tank answers everything with 401 until the passphrase is in,
+    // so ask for it and start over rather than showing an error.
+    if (err instanceof ApiError && err.code === 'gate_required') {
+      await promptForPassphrase();
+      return loadTank();
+    }
     if (err instanceof ApiError && err.status === 404) {
       showFatal('That tank link does not exist (any more).');
     } else {

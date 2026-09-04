@@ -17,6 +17,10 @@ services:
       FFA_TRUST_PROXY: "1"
       FFA_DATA_DIR: /data
       PORT: "8787"
+      # The tank is reachable from the internet and the hostname is public the
+      # moment a certificate is issued for it, so the passphrase is required
+      # rather than optional. Unset it only to run a deliberately open tank.
+      FFA_PASSPHRASE: ${FFA_PASSPHRASE:?set FFA_PASSPHRASE in .env (8+ characters)}
     volumes:
       # The SQLite database and the stored face images. Back this up.
       - tank-data:/data

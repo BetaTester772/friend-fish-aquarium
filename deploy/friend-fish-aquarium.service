@@ -25,6 +25,10 @@ Environment=FFA_DATA_DIR=/var/lib/friend-fish-aquarium
 # Only set this when a reverse proxy you control is definitely in front.
 Environment=FFA_TRUST_PROXY=1
 
+# The shared passphrase lives in a file, not in this unit: unit files are
+# world-readable by default. Create it with FFA_PASSPHRASE=... and chmod 600.
+EnvironmentFile=/etc/friend-fish-aquarium.env
+
 # The database directory is the only thing the app needs to write to.
 StateDirectory=friend-fish-aquarium
 NoNewPrivileges=yes

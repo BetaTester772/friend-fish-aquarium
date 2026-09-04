@@ -2,6 +2,14 @@ import { config } from './config.js';
 import { resolveFeed, FeedResult } from './game.js';
 import { decodeFaceAsset, FaceAssetError } from './faces.js';
 import { readCookie, sessionCookie, clearedSessionCookie, sessionCookieName } from './auth.js';
+import {
+  gateEnabled,
+  gateToken,
+  gateCookie,
+  hasPassed,
+  isOpenPath,
+  passphraseMatches,
+} from './gate.js';
 import { ACTIVITY_TYPES } from '../shared/activity-text.js';
 import {
   randomLook,
@@ -153,6 +161,23 @@ export function createRouter({ store, realtime, random = Math.random }) {
         headers: { 'set-cookie': clearedSessionCookie() },
       });
     })],
+
+    /** Exchange the shared passphrase for a gate cookie (see server/gate.js). */
+    ['POST', '/api/gate', async ({ request, body }) => {
+      if (!gateEnabled()) return json({ ok: true, gate: 'disabled' });
+
+      if (await passphraseMatches(body?.passphrase)) {
+        return json({ ok: true }, 200, {
+          'set-cookie': gateCookie(request, await gateToken()),
+        });
+      }
+
+      await sleep(config.gate.failureDelayMs);
+      return json(
+        { error: 'wrong_passphrase', message: 'That is not the passphrase.' },
+        403,
+      );
+    }],
 
     ['GET', '/api/rules', () => json(publicRules())],
 
@@ -417,6 +442,18 @@ export function createRouter({ store, realtime, random = Math.random }) {
       const params = matchPath(route.segments, path);
       if (!params) continue;
 
+      // The gate covers reads as well as writes: seeing the tank means seeing
+      // everyone's face, which is the part worth protecting.
+      if (!isOpenPath(url.pathname) && !(await hasPassed(request))) {
+        return json(
+          {
+            error: 'gate_required',
+            message: 'This tank is private. Enter the passphrase to come in.',
+          },
+          401,
+        );
+      }
+
       const session = await store.sessionByToken(
         readCookie(request, sessionCookieName),
       );
@@ -476,6 +513,8 @@ function matchPath(segments, path) {
   }
   return params;
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const INVALID_BODY = Symbol('invalid body');
 

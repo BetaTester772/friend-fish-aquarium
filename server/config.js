@@ -62,6 +62,22 @@ export const config = {
     heartbeatMs: 20_000,
   },
 
+  /**
+   * Shared passphrase protecting the whole tank (see server/gate.js). Unset
+   * means no gate, which is how local development and the tests run.
+   */
+  gate: {
+    passphrase: process.env.FFA_PASSPHRASE || null,
+    minLength: 8,
+    maxAgeMs: 365 * 24 * 60 * 60 * 1000,
+    /**
+     * Fixed pause after a wrong guess. It caps an attacker at a few tries per
+     * second without any per-IP bookkeeping, which behind a proxy would mean
+     * trusting a header anyone can forge.
+     */
+    failureDelayMs: 300,
+  },
+
   session: {
     cookieName: 'ffa_session',
     maxAgeMs: 365 * 24 * 60 * 60 * 1000,
