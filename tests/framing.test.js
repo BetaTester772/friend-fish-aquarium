@@ -4,6 +4,7 @@ import {
   createHoldTimer,
   framingHint,
   boundsOf,
+  normalizeLandmarks,
   HOLD_MS,
   GRACE_MS,
 } from '../client/src/creator/framing.js';
@@ -25,6 +26,41 @@ test('bounds are taken across every landmark', () => {
     maxX: 0.7,
     maxY: 0.75,
   });
+});
+
+test('pixel-coordinate landmarks are brought back into [0,1]', () => {
+  // An Android WebView returned pixel coordinates where the API documents
+  // normalized ones. Everything downstream assumes [0,1]: the framing rules
+  // compared 1186 against 0.98 and refused the shot, the mesh was drawn far
+  // off-canvas, and the cutout multiplied by the frame size a second time.
+  const inPixels = face({ x: 260, y: 170, w: 1186, h: 940 });
+  const fixed = normalizeLandmarks(inPixels, 1707, 1280);
+
+  const { minX, maxX, minY, maxY } = boundsOf(fixed);
+  assert.ok(Math.abs(minX - 260 / 1707) < 1e-9);
+  assert.ok(Math.abs(maxX - 1446 / 1707) < 1e-9);
+  assert.ok(Math.abs(minY - 170 / 1280) < 1e-9);
+  assert.ok(Math.abs(maxY - 1110 / 1280) < 1e-9);
+
+  // And the framing rules now agree it is a perfectly good face.
+  assert.equal(framingHint(fixed), null);
+  assert.match(framingHint(inPixels), /Center|back/, 'raw pixels would be refused');
+});
+
+test('already-normalized landmarks are left exactly as they are', () => {
+  const normalized = centred(0.4, 0.5);
+  assert.equal(normalizeLandmarks(normalized, 1707, 1280), normalized);
+
+  // A face at the very edge can drift just past 1 without being pixels.
+  const edge = face({ x: 0.9, y: 0.9, w: 0.15, h: 0.15 });
+  assert.equal(normalizeLandmarks(edge, 1280, 960), edge);
+});
+
+test('normalizing copes with missing inputs rather than throwing', () => {
+  assert.equal(normalizeLandmarks([], 1280, 960).length, 0);
+  assert.equal(normalizeLandmarks(null, 1280, 960), null);
+  const pts = centred(0.4, 0.5);
+  assert.equal(normalizeLandmarks(pts, 0, 0), pts, 'no frame size yet');
 });
 
 test('a normally framed face is accepted', () => {

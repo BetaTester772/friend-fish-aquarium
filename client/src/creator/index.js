@@ -9,7 +9,12 @@ import {
   loadFaceLandmarker,
   primaryFace,
 } from './face-detector.js';
-import { boundsOf, createHoldTimer, framingHint } from './framing.js';
+import {
+  boundsOf,
+  createHoldTimer,
+  framingHint,
+  normalizeLandmarks,
+} from './framing.js';
 import {
   androidChromeUrl,
   canJumpToRealBrowser,
@@ -451,7 +456,13 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           const ctx = overlay.getContext('2d');
           ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-          const landmarks = primaryFace(result.faceLandmarks);
+          // Normalize before anything reads these: one browser hands back
+          // pixel coordinates, and every consumer downstream assumes [0,1].
+          const landmarks = normalizeLandmarks(
+            primaryFace(result.faceLandmarks),
+            video.videoWidth,
+            video.videoHeight,
+          );
           attempts += 1;
 
           if (!landmarks) {

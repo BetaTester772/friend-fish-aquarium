@@ -12,6 +12,38 @@ export const HOLD_MS = 900;
 /** A blink or a wobble should not restart the countdown. */
 export const GRACE_MS = 350;
 
+/**
+ * Coerces landmarks into the [0,1] space the rest of the pipeline assumes.
+ *
+ * The task API documents normalized coordinates, and on desktop that is what
+ * arrives. An Android WebView in the field returned pixel coordinates instead —
+ * a face measured 1186 wide in a 1707px frame — which quietly broke everything
+ * downstream at once: the framing rules compared 1186 against 0.98 and refused
+ * the shot, the mesh was drawn about 1700x off-canvas so nothing appeared, and
+ * the cutout multiplied by the frame size again and cropped nowhere near the
+ * face.
+ *
+ * Normalized values can drift slightly outside [0,1] on a face at the frame
+ * edge, but never past 1.5, so that is a safe line between the two.
+ */
+export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
+  if (!landmarks?.length || !frameWidth || !frameHeight) return landmarks;
+
+  let maxX = 0;
+  let maxY = 0;
+  for (const point of landmarks) {
+    if (Number.isFinite(point.x) && point.x > maxX) maxX = point.x;
+    if (Number.isFinite(point.y) && point.y > maxY) maxY = point.y;
+  }
+  if (maxX <= 1.5 && maxY <= 1.5) return landmarks;
+
+  return landmarks.map((point) => ({
+    ...point,
+    x: point.x / frameWidth,
+    y: point.y / frameHeight,
+  }));
+}
+
 export function boundsOf(landmarks) {
   let minX = 1;
   let minY = 1;
