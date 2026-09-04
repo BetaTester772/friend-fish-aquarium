@@ -4,7 +4,8 @@
 # HTTPS is not optional here: browsers refuse getUserMedia on an insecure
 # origin, so without a certificate nobody can add a fish.
 #
-#   FFA_DOMAIN=tank.example.com FFA_EMAIL=you@example.com docker compose up -d
+# Copy .env.example to .env, put your address in it, then:
+#   docker compose up -d --build
 
 services:
   app:
@@ -31,8 +32,10 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      FFA_DOMAIN: ${FFA_DOMAIN:?set FFA_DOMAIN to the hostname you are serving}
-      FFA_EMAIL: ${FFA_EMAIL:-}
+      FFA_DOMAIN: ${FFA_DOMAIN:-friend-fish-aquarium.betatester772.dev}
+      # Required: an empty value makes Caddy's `email` directive a parse error,
+      # so fail here with a readable message instead of inside the container.
+      FFA_EMAIL: ${FFA_EMAIL:?set FFA_EMAIL in .env (Let us Encrypt expiry notices)}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

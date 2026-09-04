@@ -34,16 +34,20 @@ is why development works without a certificate. Plan on a domain name.
 obtains and renews a Let's Encrypt certificate on its own.
 
 ```sh
-export FFA_DOMAIN=tank.example.com     # must already point at this host
-export FFA_EMAIL=you@example.com       # for certificate expiry notices
+cp .env.example .env      # then put your address in FFA_EMAIL
 docker compose up -d --build
 
 # put the demo fish in, if you want them
 docker compose exec app node scripts/seed.js
 ```
 
+`.env` is gitignored on purpose: this repository is public, and an address
+committed to it gets scraped. `FFA_DOMAIN` defaults to the deployed hostname;
+`FFA_EMAIL` has no default because an empty one is a Caddy parse error, so
+compose fails fast with a readable message instead.
+
 Ports 80 and 443 must be reachable from the internet for the certificate
-challenge to succeed.
+challenge to succeed, and the hostname must already resolve to the host.
 
 ### Without Docker
 
