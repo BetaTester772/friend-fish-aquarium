@@ -4,6 +4,8 @@ import {
   createHoldTimer,
   framingHint,
   isPlausible,
+  coverCrop,
+  toCropSpace,
   boundsOf,
   rawBoundsOf,
   normalizeLandmarks,
@@ -269,4 +271,49 @@ test('a stray point or two does not condemn a good frame', () => {
     strays: [{ x: -4, y: -3 }, { x: 9, y: 8 }],
   });
   assert.equal(isPlausible(withStrays), true, 'the trim absorbs them');
+});
+
+test('a landscape camera in a portrait box shows only the middle of the picture', () => {
+  // The phone: a 1707x1280 frame in the creator's 3:4 stage.
+  const crop = coverCrop(1707, 1280, 254, 338);
+  assert.equal(Math.round(crop.sh), 1280, 'the full height is visible');
+  assert.equal(Math.round(crop.sw), 962, 'a bit over half the width is');
+  assert.equal(Math.round(crop.sx), 373, 'cropped evenly from both sides');
+  assert.equal(crop.sy, 0);
+});
+
+test('a frame the same shape as the box is not cropped at all', () => {
+  const crop = coverCrop(480, 640, 255, 340); // both exactly 3:4
+  assert.equal(crop.sx, 0);
+  assert.equal(crop.sy, 0);
+  assert.equal(crop.sw, 480);
+  assert.equal(crop.sh, 640);
+});
+
+test('coverCrop has nothing to say about a frame that is not ready', () => {
+  assert.equal(coverCrop(0, 0, 254, 338), null);
+  assert.equal(coverCrop(1707, 1280, 0, 0), null);
+});
+
+test('the visible face is centred even when the frame says otherwise', () => {
+  const crop = coverCrop(1707, 1280, 254, 338);
+  // Dead centre of the picture on screen is dead centre of the frame.
+  const [middle] = toCropSpace([{ x: 0.5, y: 0.5 }], crop, 1707, 1280);
+  assert.ok(Math.abs(middle.x - 0.5) < 1e-9);
+  assert.ok(Math.abs(middle.y - 0.5) < 1e-9);
+
+  // But a face at the left edge of the frame is off-screen entirely, which is
+  // the difference the framing advice was blind to.
+  const [edge] = toCropSpace([{ x: 0.15, y: 0.5 }], crop, 1707, 1280);
+  assert.ok(edge.x < 0, `frame x 0.15 is off the visible picture, got ${edge.x}`);
+});
+
+test('framing advice reads the visible picture, not the discarded frame', () => {
+  const crop = coverCrop(1707, 1280, 254, 338);
+  // A face filling a third of the frame's width fills over half the screen.
+  const face = mesh({ x: 0.34, y: 0.25, w: 0.32, h: 0.45 });
+  const shown = toCropSpace(face, crop, 1707, 1280);
+  const box = boundsOf(shown);
+  assert.ok(box.maxX - box.minX > 0.5, 'wider on screen than in the frame');
+  assert.equal(framingHint(shown), null, 'and so it is close enough');
 });

@@ -114,6 +114,32 @@ export function isPlausible(landmarks) {
   return width > 0.02 && height > 0.02;
 }
 
+/**
+ * The part of a camera frame an `object-fit: cover` box actually shows.
+ *
+ * A 4:3 camera in a 3:4 box shows only the middle 56% of the picture, so a face
+ * centred on screen is nowhere near centred in the frame the detector reads.
+ * Returning the crop explicitly lets the preview, the mesh and the framing
+ * advice all work in the coordinates the user can actually see.
+ */
+export function coverCrop(frameWidth, frameHeight, boxWidth, boxHeight) {
+  if (!frameWidth || !frameHeight || !boxWidth || !boxHeight) return null;
+  const scale = Math.max(boxWidth / frameWidth, boxHeight / frameHeight);
+  const sw = Math.min(frameWidth, boxWidth / scale);
+  const sh = Math.min(frameHeight, boxHeight / scale);
+  return { sx: (frameWidth - sw) / 2, sy: (frameHeight - sh) / 2, sw, sh };
+}
+
+/** Re-normalizes landmarks against the visible crop rather than the full frame. */
+export function toCropSpace(landmarks, crop, frameWidth, frameHeight) {
+  if (!crop || !landmarks?.length) return landmarks;
+  return landmarks.map((point) => ({
+    ...point,
+    x: (point.x * frameWidth - crop.sx) / crop.sw,
+    y: (point.y * frameHeight - crop.sy) / crop.sh,
+  }));
+}
+
 export function framingHint(landmarks) {
   const { minX, minY, maxX, maxY } = boundsOf(landmarks);
   const width = maxX - minX;

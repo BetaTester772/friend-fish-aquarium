@@ -627,12 +627,11 @@ button {
 }
 
 /*
- * The overlay must be cropped exactly like the video underneath it, or the mesh
- * lands somewhere other than the face: the video is `cover`, so a canvas left at
- * the default `fill` gets stretched by a different factor on each axis.
+ * The overlay draws the camera picture as well as the mesh, so its bitmap is
+ * already the size of this box and no object fit is involved. Lining the two up
+ * through CSS is what put the mesh beside the face on a real phone.
  */
 .creator__overlay {
-  object-fit: cover;
   pointer-events: none;
 }
 

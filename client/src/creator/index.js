@@ -12,11 +12,13 @@ import {
 } from './face-detector.js';
 import {
   boundsOf,
+  coverCrop,
   createHoldTimer,
   framingHint,
   isPlausible,
   normalizeLandmarks,
   rawBoundsOf,
+  toCropSpace,
 } from './framing.js';
 import {
   androidChromeUrl,
@@ -301,9 +303,10 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         video.playsInline = true;
         video.muted = true;
 
+        // The canvas paints the picture as well as the mesh, so it is sized
+        // and mirrored in `tick` rather than by CSS.
         const overlay = document.createElement('canvas');
         overlay.className = 'creator__overlay';
-        overlay.style.transform = 'scaleX(-1)'; // match the mirrored video
 
         const hint = el('div', 'creator__hint', hintText);
         stage.append(video, overlay, hint);
@@ -490,9 +493,22 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           }
           stalled = false;
 
-          if (overlay.width !== video.videoWidth) {
-            overlay.width = video.videoWidth;
-            overlay.height = video.videoHeight;
+          // One canvas, one coordinate space.
+          //
+          // Until now the picture came from the <video> and the mesh from a
+          // transparent <canvas> on top, and they lined up only if the browser
+          // applied `object-fit: cover` to both replaced elements identically
+          // and mirrored both the same way. On the phone they did not, and the
+          // mesh landed off the face while every number the detector reported
+          // was correct. So the canvas now draws the frame itself and the mesh
+          // over it, through the same crop and the same mirror: they cannot
+          // disagree, whatever the browser thinks the video's dimensions are.
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const wantWidth = Math.round(overlay.clientWidth * dpr);
+          const wantHeight = Math.round(overlay.clientHeight * dpr);
+          if (wantWidth && (overlay.width !== wantWidth || overlay.height !== wantHeight)) {
+            overlay.width = wantWidth;
+            overlay.height = wantHeight;
           }
 
           // MediaPipe rejects a repeated timestamp, which happens whenever the
@@ -508,8 +524,26 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             return;
           }
 
+          const crop = coverCrop(
+            video.videoWidth,
+            video.videoHeight,
+            overlay.width,
+            overlay.height,
+          );
+
           const ctx = overlay.getContext('2d');
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.clearRect(0, 0, overlay.width, overlay.height);
+          // Selfie view. Mirroring the context mirrors the mesh with the
+          // picture, instead of hoping two CSS transforms agree.
+          ctx.setTransform(-1, 0, 0, 1, overlay.width, 0);
+          if (crop) {
+            ctx.drawImage(
+              video,
+              crop.sx, crop.sy, crop.sw, crop.sh,
+              0, 0, overlay.width, overlay.height,
+            );
+          }
 
           // Normalize before anything reads these: one browser hands back
           // pixel coordinates, and every consumer downstream assumes [0,1].
@@ -538,27 +572,28 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             });
           }
 
-          // Screen pixels per bitmap pixel, matching the CSS `object-fit:
-          // cover`. Without it the strokes vanish on a high-resolution camera.
-          const coverScale =
-            Math.max(
-              overlay.clientWidth / overlay.width,
-              overlay.clientHeight / overlay.height,
-            ) || 1;
-          drawFaceMesh(ctx, landmarks, coverScale);
+          // What the user can see, in the coordinates they see it in. The
+          // framing advice is about the picture on screen, not about the part
+          // of the frame the crop threw away.
+          const shown = toCropSpace(landmarks, crop, video.videoWidth, video.videoHeight);
+
+          // The bitmap is now `dpr` device pixels per CSS pixel, so line widths
+          // divide by that to stay a fixed thickness on screen.
+          drawFaceMesh(ctx, shown, 1 / dpr);
+          // The cut-out reads the raw frame, so it keeps the raw landmarks.
           state.landmarks = landmarks;
 
           watchForNonsense(landmarks);
-          const problem = framingHint(landmarks);
+          const problem = framingHint(shown);
 
           if (state.debug) {
             const b = boundsOf(landmarks);
-            const r = rawBoundsOf(landmarks);
+            const v = boundsOf(shown);
             showDebug([
               `points ${landmarks.length}  frames ${attempts}`,
-              `box  ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
-              `raw  ${round(r.minX)},${round(r.minY)} ${round(r.maxX)},${round(r.maxY)}`,
-              `size ${round(b.maxX - b.minX)}x${round(b.maxY - b.minY)}`,
+              `crop ${crop ? `${Math.round(crop.sw)}x${Math.round(crop.sh)}+${Math.round(crop.sx)}+${Math.round(crop.sy)}` : 'none'}`,
+              `frame ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
+              `shown ${round(v.minX)},${round(v.minY)} ${round(v.maxX)},${round(v.maxY)}`,
               problem ? `HINT ${problem}` : 'framing ok',
             ]);
           }
@@ -570,7 +605,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             // always shoot it.
             captureBtn.disabled = false;
             setHint(problem);
-            reportFraming(problem, landmarks);
+            reportFraming(problem, shown);
             return;
           }
 
