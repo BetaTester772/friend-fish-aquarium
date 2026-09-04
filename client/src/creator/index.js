@@ -14,6 +14,7 @@ import {
   createHoldTimer,
   framingHint,
   normalizeLandmarks,
+  rawBoundsOf,
 } from './framing.js';
 import {
   androidChromeUrl,
@@ -408,12 +409,17 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           if (reportedFraming) return;
           reportedFraming = true;
           const { minX, minY, maxX, maxY } = boundsOf(landmarks);
+          const raw = rawBoundsOf(landmarks);
           track('face_framing_rejected', {
             hint,
             w: round(maxX - minX),
             h: round(maxY - minY),
             cx: round((minX + maxX) / 2),
             cy: round((minY + maxY) / 2),
+            // The untrimmed extremes alongside them, so a gap between the two
+            // says outliers outright instead of leaving it to be inferred.
+            raw: `${round(raw.minX)},${round(raw.minY)} .. ${round(raw.maxX)},${round(raw.maxY)}`,
+            points: landmarks.length,
             video: `${video.videoWidth}x${video.videoHeight}`,
             stage: `${overlay.clientWidth}x${overlay.clientHeight}`,
           });

@@ -13,28 +13,61 @@ export const HOLD_MS = 900;
 export const GRACE_MS = 350;
 
 /**
+ * Bounds that a few bad landmarks cannot dictate.
+ *
+ * The detector on at least one Android browser returns a handful of wild
+ * values among otherwise sane ones — a point at 794 where the rest sit between
+ * 0.3 and 0.7. A plain min/max then describes the outliers rather than the
+ * face, which is how a perfectly centred face came to report its centre at
+ * (0.11, 0.02): the box was being stretched to the strays.
+ *
+ * Trimming a couple of percent from each end throws those away. A face mesh has
+ * hundreds of points, so losing the extreme few costs nothing real.
+ */
+export function boundsOf(landmarks, trim = 0.02) {
+  const xs = [];
+  const ys = [];
+  for (const point of landmarks) {
+    if (Number.isFinite(point.x)) xs.push(point.x);
+    if (Number.isFinite(point.y)) ys.push(point.y);
+  }
+  if (xs.length === 0 || ys.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+
+  xs.sort((a, b) => a - b);
+  ys.sort((a, b) => a - b);
+  const cut = (list) => Math.min(Math.floor(list.length * trim), Math.floor((list.length - 1) / 2));
+
+  const cx = cut(xs);
+  const cy = cut(ys);
+  return {
+    minX: xs[cx],
+    maxX: xs[xs.length - 1 - cx],
+    minY: ys[cy],
+    maxY: ys[ys.length - 1 - cy],
+  };
+}
+
+/** Raw extremes, for reporting what the detector actually produced. */
+export function rawBoundsOf(landmarks) {
+  return boundsOf(landmarks, 0);
+}
+
+/**
  * Coerces landmarks into the [0,1] space the rest of the pipeline assumes.
  *
- * The task API documents normalized coordinates, and on desktop that is what
- * arrives. An Android WebView in the field returned pixel coordinates instead —
- * a face measured 1186 wide in a 1707px frame — which quietly broke everything
- * downstream at once: the framing rules compared 1186 against 0.98 and refused
- * the shot, the mesh was drawn about 1700x off-canvas so nothing appeared, and
- * the cutout multiplied by the frame size again and cropped nowhere near the
- * face.
- *
- * Normalized values can drift slightly outside [0,1] on a face at the frame
- * edge, but never past 1.5, so that is a safe line between the two.
+ * The task API documents normalized coordinates and that is what desktop
+ * returns. Judgement uses the trimmed bounds, not the raw maximum: keying off a
+ * single stray value meant one outlier could convince this that a properly
+ * normalized frame was in pixels, and dividing by the frame size then collapsed
+ * every real landmark to near zero — which took the mesh, the crop and the
+ * framing rules down together.
  */
 export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
   if (!landmarks?.length || !frameWidth || !frameHeight) return landmarks;
 
-  let maxX = 0;
-  let maxY = 0;
-  for (const point of landmarks) {
-    if (Number.isFinite(point.x) && point.x > maxX) maxX = point.x;
-    if (Number.isFinite(point.y) && point.y > maxY) maxY = point.y;
-  }
+  const { maxX, maxY } = boundsOf(landmarks);
   if (maxX <= 1.5 && maxY <= 1.5) return landmarks;
 
   return landmarks.map((point) => ({
@@ -42,20 +75,6 @@ export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
     x: point.x / frameWidth,
     y: point.y / frameHeight,
   }));
-}
-
-export function boundsOf(landmarks) {
-  let minX = 1;
-  let minY = 1;
-  let maxX = 0;
-  let maxY = 0;
-  for (const point of landmarks) {
-    if (point.x < minX) minX = point.x;
-    if (point.y < minY) minY = point.y;
-    if (point.x > maxX) maxX = point.x;
-    if (point.y > maxY) maxY = point.y;
-  }
-  return { minX, minY, maxX, maxY };
 }
 
 /**

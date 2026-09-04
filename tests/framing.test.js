@@ -4,10 +4,20 @@ import {
   createHoldTimer,
   framingHint,
   boundsOf,
+  rawBoundsOf,
   normalizeLandmarks,
   HOLD_MS,
   GRACE_MS,
 } from '../client/src/creator/framing.js';
+
+/** A realistic mesh: many points across the face, plus optional strays. */
+const mesh = ({ x, y, w, h, points = 468, strays = [] }) => {
+  const grid = Array.from({ length: points }, (_, i) => ({
+    x: x + (w * ((i * 37) % 100)) / 100,
+    y: y + (h * ((i * 53) % 100)) / 100,
+  }));
+  return [...grid, ...strays];
+};
 
 /** A rectangular blob of landmarks, in the normalized frame coordinates. */
 const face = ({ x, y, w, h }) => [
@@ -19,8 +29,54 @@ const face = ({ x, y, w, h }) => [
 
 const centred = (w, h) => face({ x: 0.5 - w / 2, y: 0.5 - h / 2, w, h });
 
+test('a few wild landmarks do not get to define the face', () => {
+  // One Android browser returns a handful of extreme values among sane ones.
+  // Plain min/max then described the strays: a centred face reported its centre
+  // at (0.11, 0.02), the crop went off-frame and the cutout came back empty.
+  const centredFace = { x: 0.3, y: 0.25, w: 0.4, h: 0.5 };
+  const clean = mesh(centredFace);
+  const dirty = mesh({
+    ...centredFace,
+    strays: [{ x: 794, y: -449 }, { x: -392, y: 492 }, { x: 1200, y: 1200 }],
+  });
+
+  const good = boundsOf(clean);
+  const trimmed = boundsOf(dirty);
+  for (const key of ['minX', 'maxX', 'minY', 'maxY']) {
+    assert.ok(
+      Math.abs(trimmed[key] - good[key]) < 0.02,
+      `${key}: strays moved it from ${good[key]} to ${trimmed[key]}`,
+    );
+  }
+
+  // Untrimmed, the same input is nonsense — which is what shipped.
+  const raw = rawBoundsOf(dirty);
+  assert.equal(raw.maxX, 1200, 'the worst stray defines the raw edge');
+  assert.equal(raw.minY, -449);
+  assert.ok(raw.maxX - raw.minX > 1500, 'a face 0.4 wide measured over 1500');
+
+  // And the framing rules now see a perfectly ordinary face.
+  assert.equal(framingHint(dirty), null);
+  assert.match(framingHint(mesh({ ...centredFace, x: -0.2 })), /Center/);
+});
+
+test('normalizing is not fooled into scaling a good frame by one stray', () => {
+  // Keying the pixels-or-normalized decision off the raw maximum meant a single
+  // outlier divided every real landmark by the frame size, collapsing the whole
+  // mesh to near zero.
+  const dirty = mesh({ x: 0.3, y: 0.25, w: 0.4, h: 0.5, strays: [{ x: 900, y: 900 }] });
+  const out = normalizeLandmarks(dirty, 1707, 1280);
+  assert.equal(out, dirty, 'already normalized: leave it alone');
+
+  // Genuine pixel coordinates are still converted.
+  const inPixels = mesh({ x: 300, y: 250, w: 700, h: 900 });
+  const fixed = normalizeLandmarks(inPixels, 1707, 1280);
+  assert.notEqual(fixed, inPixels);
+  assert.ok(boundsOf(fixed).maxX <= 1);
+});
+
 test('bounds are taken across every landmark', () => {
-  assert.deepEqual(boundsOf(centred(0.4, 0.5)), {
+  assert.deepEqual(rawBoundsOf(centred(0.4, 0.5)), {
     minX: 0.3,
     minY: 0.25,
     maxX: 0.7,

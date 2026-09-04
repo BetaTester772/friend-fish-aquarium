@@ -17,10 +17,16 @@ export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}
     throw new Error('Camera frame is not ready yet');
   }
 
+  // Clamped into the frame: a single stray landmark would otherwise drag the
+  // mask polygon off to infinity and mask away the entire face.
+  const clamp = (value, max) => Math.min(max, Math.max(0, value));
   const oval = faceOvalIndices()
     .map((index) => landmarks[index])
-    .filter(Boolean)
-    .map((point) => ({ x: point.x * frameWidth, y: point.y * frameHeight }));
+    .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+    .map((point) => ({
+      x: clamp(point.x * frameWidth, frameWidth),
+      y: clamp(point.y * frameHeight, frameHeight),
+    }));
 
   if (oval.length < 8) throw new Error('Face outline was incomplete');
 
