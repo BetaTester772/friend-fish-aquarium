@@ -9,7 +9,7 @@ import { createFishCard } from './ui/fish-card.js';
 import { createActivityFeed } from './ui/activity-feed.js';
 import { createHud, promptForName } from './ui/hud.js';
 import { toast } from './ui/toast.js';
-import { promptForPassphrase } from './ui/gate.js';
+import { promptForPassphrase, unlockFromLink } from './ui/gate.js';
 
 /**
  * Wires the tank together: load a snapshot, render it, keep it in sync, and
@@ -19,6 +19,10 @@ import { promptForPassphrase } from './ui/gate.js';
  */
 async function main() {
   const state = createState();
+
+  // An invite link carrying the share token admits the visitor before the first
+  // request, so they never see the passphrase prompt at all.
+  await unlockFromLink();
 
   const snapshot = await loadTank();
   if (!snapshot) return;

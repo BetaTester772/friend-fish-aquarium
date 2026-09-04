@@ -26,8 +26,8 @@ async function request(method, path, body) {
 }
 
 export const api = {
-  /** Exchange the shared passphrase for a gate cookie. */
-  unlock: (passphrase) => request('POST', '/gate', { passphrase }),
+  /** Exchange a typed passphrase, or a share token from a link, for a cookie. */
+  unlock: (credentials) => request('POST', '/gate', credentials),
 
   session: () => request('GET', '/session'),
   signIn: (displayName) => request('POST', '/session', { displayName }),

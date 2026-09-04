@@ -102,6 +102,23 @@ a group who will read it out over a chat thread.
 - `/api/health` stays open so the healthcheck works, and the page itself still
   loads — otherwise there would be nothing to render the prompt in.
 
+**Nobody has to type it.** The menu behind your name has *Copy invite link*,
+which produces a link that lets the recipient straight in:
+
+```
+https://friend-fish-aquarium.example.dev/?k=<share token>
+```
+
+The link carries a *share token*, not the passphrase — it is the same value as
+the gate cookie, so it grants the same access while never revealing what people
+type, and rotating the passphrase invalidates every outstanding link along with
+every cookie. The client redeems it and strips it from the address bar
+immediately, so it does not linger in a screenshot or get copied out of the URL
+bar by someone who only meant to share the page. A stale link falls through to
+the prompt instead of erroring.
+
+Treat the link as the secret it is: anyone you send it to is in.
+
 This is a shared passphrase, not authentication: it keeps strangers out, and it
 does not stop someone who has it from passing it on. For a friend group that is
 the right trade; if you ever need more, the invite-code plumbing

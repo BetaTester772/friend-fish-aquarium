@@ -1,6 +1,44 @@
 import { api, ApiError } from '../api.js';
 import { openModal, el } from './modal.js';
 
+/** Query parameter carrying the share token in an invite link. */
+export const GATE_PARAM = 'k';
+
+/**
+ * Lets an invite link do the typing.
+ *
+ * The link carries the share token rather than the passphrase, so a leaked
+ * link never tells anyone what to type, and rotating the passphrase kills every
+ * outstanding link. The parameter is stripped from the address bar either way,
+ * so it does not linger in a screenshot or get copied out of the URL bar by
+ * someone who only meant to share the page.
+ */
+export async function unlockFromLink() {
+  const url = new URL(location.href);
+  const token = url.searchParams.get(GATE_PARAM);
+  if (!token) return false;
+
+  let admitted = false;
+  try {
+    await api.unlock({ token });
+    admitted = true;
+  } catch {
+    // A stale or wrong link just falls through to the prompt.
+  }
+
+  url.searchParams.delete(GATE_PARAM);
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  return admitted;
+}
+
+/** Builds the one-click link to hand to a friend. */
+export function inviteLink({ inviteCode, shareKey }) {
+  const url = new URL(location.origin);
+  if (inviteCode) url.searchParams.set('tank', inviteCode);
+  if (shareKey) url.searchParams.set(GATE_PARAM, shareKey);
+  return url.toString();
+}
+
 /**
  * The passphrase prompt shown when the tank is private (see server/gate.js).
  *
@@ -42,7 +80,7 @@ export function promptForPassphrase() {
         error.hidden = true;
 
         try {
-          await api.unlock(input.value);
+          await api.unlock({ passphrase: input.value });
           close(true);
         } catch (err) {
           // The server pauses before answering a wrong guess, so this lands
