@@ -34,9 +34,22 @@ async function main() {
     current_user_has_fish: Boolean(snapshot.viewer?.fishId),
   });
 
-  const aquarium = createAquarium({
-    canvas: document.getElementById('tank-canvas'),
-  });
+  // A tank with no WebGL is not a degraded tank, it is a blank page — three.js
+  // throws on context creation and takes the HUD down with it. Catch it here
+  // and say what happened, rather than leaving someone staring at empty blue.
+  let aquarium;
+  try {
+    aquarium = createAquarium({ canvas: document.getElementById('tank-canvas') });
+  } catch (err) {
+    console.error(err);
+    track('webgl_unavailable', { browser: navigator.userAgent });
+    showFatal(
+      'This browser cannot draw the tank — it has no WebGL. Turn on hardware ' +
+        'acceleration in your browser settings, or open the tank on another ' +
+        'device.',
+    );
+    return;
+  }
   await aquarium.syncFish(snapshot.fish);
 
   // The scene mirrors state; state is never derived from the scene.

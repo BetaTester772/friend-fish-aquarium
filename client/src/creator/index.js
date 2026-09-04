@@ -4,6 +4,7 @@ import { openModal, el } from '../ui/modal.js';
 import { toast } from '../ui/toast.js';
 import { randomLook } from '../../../shared/fish-variants.js';
 import {
+  activeDelegate,
   drawFaceMesh,
   framingHint,
   loadFaceLandmarker,
@@ -146,17 +147,70 @@ export function openFishCreator({ tankId, onCreated }) {
           return;
         }
 
+        // Attach and explicitly start playback. `autoplay` alone is not enough:
+        // Safari on iOS refuses it in Low Power Mode, and by this point the
+        // user's click has been through two awaits so the gesture context is
+        // gone. Without this the video stays black, readyState never reaches 2,
+        // and the loop below spins forever on "Starting camera…".
+        state.video.srcObject = state.stream;
+        try {
+          await state.video.play();
+        } catch (err) {
+          track('camera_playback_blocked', { browser: navigator.userAgent });
+          renderTapToStart();
+          return;
+        }
+
         try {
           state.landmarker = await loadFaceLandmarker();
-        } catch {
+        } catch (err) {
+          track('face_detector_failed', {
+            browser: navigator.userAgent,
+            message: String(err?.message ?? err).slice(0, 200),
+          });
           stopCamera();
           renderConsent(
-            'The face detector failed to load. Check your connection and try again.',
+            'The face detector would not start on this device. ' +
+              'Try a different browser, or ask for a hand.',
           );
           return;
         }
 
+        track('face_detector_ready', { delegate: activeDelegate });
         runDetectionLoop();
+      }
+
+      /**
+       * Playback was refused — almost always iOS Low Power Mode. One tap, this
+       * time inside a real gesture, generally fixes it.
+       */
+      function renderTapToStart() {
+        const start = el('button', 'btn btn--primary', 'Tap to start the camera');
+        start.type = 'button';
+        start.addEventListener('click', async () => {
+          try {
+            await state.video.play();
+          } catch {
+            return;
+          }
+          try {
+            state.landmarker = await loadFaceLandmarker();
+          } catch {
+            stopCamera();
+            renderConsent('The face detector would not start on this device.');
+            return;
+          }
+          state.hint.textContent = 'Center your face in the frame.';
+          runDetectionLoop();
+        });
+
+        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        cancelBtn.type = 'button';
+        cancelBtn.addEventListener('click', cancel);
+
+        const actions = state.video.closest('.modal').querySelector('.modal__actions');
+        actions.replaceChildren(cancelBtn, start);
+        state.hint.textContent = 'Your browser paused the camera.';
       }
 
       function renderCameraShell(hintText) {
@@ -237,9 +291,10 @@ export function openFishCreator({ tankId, onCreated }) {
 
       function runDetectionLoop() {
         const { video, overlay, hint, captureBtn } = state;
-        video.srcObject = state.stream;
 
         let stable = 0;
+        let stalled = false;
+        const loopStarted = performance.now();
         let attempts = 0;
         let lastTimestamp = -1;
         const detectStarted = performance.now();
@@ -247,7 +302,19 @@ export function openFishCreator({ tankId, onCreated }) {
 
         const tick = () => {
           state.rafId = requestAnimationFrame(tick);
-          if (video.readyState < 2 || !state.landmarker) return;
+
+          if (video.readyState < 2 || !state.landmarker) {
+            // A camera that never delivers a frame used to leave the user
+            // staring at "Starting camera…" with nothing to act on. Say so
+            // instead of spinning silently.
+            if (!stalled && performance.now() - loopStarted > 6000) {
+              stalled = true;
+              track('camera_stalled', { browser: navigator.userAgent });
+              setHint('The camera is not sending a picture. Try reopening this.');
+            }
+            return;
+          }
+          stalled = false;
 
           if (overlay.width !== video.videoWidth) {
             overlay.width = video.videoWidth;

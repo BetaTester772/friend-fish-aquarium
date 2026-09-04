@@ -10,19 +10,42 @@ import { DrawingUtils, FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-
  */
 let landmarkerPromise = null;
 
+/** Which delegate we ended up on, for the analytics event. */
+export let activeDelegate = null;
+
+function createWith(fileset, delegate) {
+  return FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: '/models/face_landmarker.task',
+      delegate,
+    },
+    runningMode: 'VIDEO',
+    numFaces: 2, // enough to notice a second person in frame
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  });
+}
+
+/**
+ * The GPU delegate needs working WebGL2. Plenty of real devices do not have it
+ * — older Android, a browser with hardware acceleration switched off, a locked
+ * down Firefox — and there the GPU path throws on creation. Falling back to CPU
+ * is slower but it works, which beats telling someone their browser is not good
+ * enough.
+ */
 export function loadFaceLandmarker() {
   landmarkerPromise ??= (async () => {
     const fileset = await FilesetResolver.forVisionTasks('/mediapipe-wasm');
-    return FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath: '/models/face_landmarker.task',
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      numFaces: 2, // enough to notice a second person in frame
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-    });
+    try {
+      const landmarker = await createWith(fileset, 'GPU');
+      activeDelegate = 'GPU';
+      return landmarker;
+    } catch (err) {
+      console.warn('[ffa] GPU face detection unavailable, falling back to CPU', err);
+      const landmarker = await createWith(fileset, 'CPU');
+      activeDelegate = 'CPU';
+      return landmarker;
+    }
   })().catch((err) => {
     landmarkerPromise = null; // let a retry re-attempt the load
     throw err;
