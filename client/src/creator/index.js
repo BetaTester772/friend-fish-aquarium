@@ -457,13 +457,10 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           drawFaceMesh(ctx, landmarks, coverScale);
           state.landmarks = landmarks;
 
-          const problem = framingHint(landmarks, result.faceLandmarks.length);
+          const problem = framingHint(landmarks);
           if (problem) {
             hold.bad(timestamp);
-            // "Too many faces" is a warning, not a blocker — we already picked
-            // the biggest one, so let them shoot it manually if they want.
-            const crowded = result.faceLandmarks.length > 1;
-            captureBtn.disabled = !crowded;
+            captureBtn.disabled = true;
             setHint(problem);
             return;
           }

@@ -52,8 +52,12 @@ test('a face off at the edge is asked to centre', () => {
   assert.match(framingHint(face({ x: 0.86, y: 0.4, w: 0.2, h: 0.3 }), 1), /Center/);
 });
 
-test('a second face is a warning, not a rejection of the first', () => {
-  assert.match(framingHint(centred(0.4, 0.5), 2), /one face/);
+test('a well-framed face is never refused for being "too many faces"', () => {
+  // A spurious second detection used to block the shutter outright, which left
+  // people holding still in front of a camera that would never fire. The
+  // detector is asked for one face now, and framing says nothing about count.
+  assert.equal(framingHint(centred(0.4, 0.5), 2), null);
+  assert.equal(framingHint(centred(0.4, 0.5)), null);
 });
 
 // --------------------------------------------------------------- hold timer

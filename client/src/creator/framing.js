@@ -37,10 +37,14 @@ export function boundsOf(landmarks) {
  * Position is judged by the centre of the face rather than its bounding box,
  * because a forehead cropped by the top edge is normal on a phone held close
  * and is not a reason to refuse the shot.
+ *
+ * There is deliberately no "too many faces" rule. One used to live here and it
+ * blocked the shutter outright, so a single spurious detection — which the
+ * detector produced routinely — left people holding still in front of a camera
+ * that was never going to fire. The detector is now asked for one face and we
+ * use it.
  */
-export function framingHint(landmarks, faceCount) {
-  if (faceCount > 1) return 'Just one face please — using the closest one.';
-
+export function framingHint(landmarks) {
   const { minX, minY, maxX, maxY } = boundsOf(landmarks);
   const width = maxX - minX;
   const height = maxY - minY;

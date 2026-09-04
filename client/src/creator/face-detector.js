@@ -21,7 +21,17 @@ function createWith(fileset, delegate) {
       delegate,
     },
     runningMode: 'VIDEO',
-    numFaces: 2, // enough to notice a second person in frame
+    // Exactly one. Asking for two does not "notice a second person" so much as
+    // invite the model to find one: with a spare slot and the default 0.5
+    // confidence it will happily promote a chair or a shadow, and a phone in a
+    // normal room reliably reported two faces for a single person. Since the
+    // largest face is the one we use anyway (spec §10), one is all we need.
+    numFaces: 1,
+    // A touch above the default, so a marginal detection does not flicker in
+    // and out and keep resetting the capture hold.
+    minFaceDetectionConfidence: 0.6,
+    minFacePresenceConfidence: 0.6,
+    minTrackingConfidence: 0.6,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,
   });
