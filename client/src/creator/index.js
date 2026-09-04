@@ -10,6 +10,11 @@ import {
   loadFaceLandmarker,
   primaryFace,
 } from './face-detector.js';
+import {
+  androidChromeUrl,
+  canJumpToRealBrowser,
+  inAppBrowser,
+} from './in-app-browser.js';
 import { cutOutFace } from './face-cutout.js';
 import { createFishPreview } from './preview-scene.js';
 
@@ -23,7 +28,7 @@ const STABLE_FRAMES = 22;
  * The camera stream is torn down the instant it is no longer needed — after a
  * capture, on cancel, and on any error path (spec §9 step 9).
  */
-export function openFishCreator({ tankId, onCreated }) {
+export function openFishCreator({ tankId, shareUrl, onCreated }) {
   track('add_fish_clicked', { tank_id: tankId });
 
   return openModal({
@@ -80,7 +85,14 @@ export function openFishCreator({ tankId, onCreated }) {
           ),
         );
 
-        const start = el('button', 'btn btn--primary', 'Turn on camera');
+        const trapped = inAppBrowser();
+        if (trapped) track('in_app_browser_detected', { app: trapped });
+
+        const start = el(
+          'button',
+          'btn btn--primary',
+          trapped ? 'Try the camera anyway' : 'Turn on camera',
+        );
         start.type = 'button';
         start.disabled = true;
         consented.addEventListener('change', () => {
@@ -104,9 +116,57 @@ export function openFishCreator({ tankId, onCreated }) {
               'on a fish. Nothing is recorded — only the still cut-out is saved.',
           ),
           ...(error ? [el('p', 'modal__error', error)] : []),
+          ...(trapped ? [escapeHatch(trapped)] : []),
           label,
           actions,
         );
+      }
+
+      /**
+       * The way out of an in-app browser. Shown before the camera is requested,
+       * because inside one the request usually fails no matter what the visitor
+       * taps.
+       */
+      function escapeHatch(appName) {
+        const box = el('p', 'modal__error');
+        box.append(
+          el(
+            'span',
+            null,
+            `${appName}'s built-in browser usually blocks the camera. ` +
+              'Open this page in Chrome and it will work.',
+          ),
+        );
+
+        // Carries the share token, so the visitor lands inside the tank rather
+        // than at the passphrase prompt.
+        const target = shareUrl ?? location.href;
+
+        const row = el('div', 'modal__actions');
+        row.style.justifyContent = 'flex-start';
+        row.style.marginTop = '8px';
+
+        if (canJumpToRealBrowser()) {
+          const jump = el('a', 'btn btn--primary btn--small', 'Open in Chrome');
+          jump.href = androidChromeUrl(target);
+          jump.addEventListener('click', () => track('in_app_browser_escape', { app: appName }));
+          row.append(jump);
+        }
+
+        const copy = el('button', 'btn btn--ghost btn--small', 'Copy the link');
+        copy.type = 'button';
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(target);
+            copy.textContent = 'Copied — paste it in Chrome';
+          } catch {
+            window.prompt('Copy this link into Chrome', target);
+          }
+        });
+        row.append(copy);
+
+        box.append(row);
+        return box;
       }
 
       // -------------------------------------------------------- stage: camera
@@ -271,18 +331,24 @@ export function openFishCreator({ tankId, onCreated }) {
         actions.append(cancelBtn, retry);
 
         const blocked = err?.name === 'NotAllowedError';
+        const trapped = inAppBrowser();
+
         dialog.append(
           el('h2', 'modal__title', 'We need the camera'),
           el(
             'p',
             'modal__body',
-            blocked
-              ? 'The camera is blocked for this site. Allow it in your browser’s ' +
-                  'address bar or site settings, then try again. The video stays ' +
-                  'on your device — we only keep the cropped face.'
-              : 'No camera was available. Check that nothing else is using it, ' +
-                  'then try again.',
+            trapped
+              ? `${trapped}'s built-in browser will not hand over the camera, ` +
+                  'however many times you allow it. Open this page in Chrome.'
+              : blocked
+                ? 'The camera is blocked for this site. Allow it in your ' +
+                    'browser or phone settings, then try again. The video stays ' +
+                    'on your device — we only keep the cropped face.'
+                : 'No camera was available. Check that nothing else is using ' +
+                    'it, then try again.',
           ),
+          ...(trapped ? [escapeHatch(trapped)] : []),
           actions,
         );
       }
