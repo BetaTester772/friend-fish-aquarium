@@ -10,9 +10,11 @@ import { boundsOf } from './framing.js';
  * the camera frame itself. The size is deliberately modest — the PNG is stored
  * as a row in the database, not as a file.
  */
-export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}) {
-  const frameWidth = video.videoWidth;
-  const frameHeight = video.videoHeight;
+export function cutOutFace(frame, landmarks, { size = 384, padding = 0.18 } = {}) {
+  // A <video> or a <canvas>: the creator hands us the canvas it detected on, so
+  // the mask is measured against exactly the bitmap the landmarks came from.
+  const frameWidth = frame.videoWidth || frame.width;
+  const frameHeight = frame.videoHeight || frame.height;
   if (!frameWidth || !frameHeight) {
     throw new Error('Camera frame is not ready yet');
   }
@@ -58,7 +60,7 @@ export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}
   const out = document.createElement('canvas');
   out.width = out.height = size;
   const ctx = out.getContext('2d');
-  ctx.drawImage(video, left, top, side, side, 0, 0, size, size);
+  ctx.drawImage(frame, left, top, side, side, 0, 0, size, size);
 
   // 2. A blurred white oval as the alpha mask, in the same coordinate space.
   const mask = document.createElement('canvas');

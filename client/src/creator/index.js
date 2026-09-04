@@ -18,7 +18,6 @@ import {
   isPlausible,
   normalizeLandmarks,
   rawBoundsOf,
-  toCropSpace,
 } from './framing.js';
 import {
   androidChromeUrl,
@@ -411,6 +410,20 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
         // Times, not frame counts, so a slow phone behaves like a fast laptop.
         const hold = createHoldTimer();
+
+        // The frame the detector reads, drawn by us.
+        //
+        // Handed the <video> element directly, MediaPipe normalizes its output
+        // against dimensions the browser reports for it — and on this phone it
+        // came back with the chin 11% below the bottom of a frame the chin was
+        // plainly inside. Nothing downstream can recover from coordinates
+        // measured against a picture nobody else has. So the video goes into a
+        // canvas of our own first, and that canvas is what gets detected,
+        // displayed and cut out: one bitmap, whose dimensions are not a matter
+        // of opinion.
+        const READ_HEIGHT = 640;
+        const read = document.createElement('canvas');
+        const readCtx = read.getContext('2d');
         let stalled = false;
         const loopStarted = performance.now();
         let attempts = 0;
@@ -473,6 +486,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             raw: `${round(raw.minX)},${round(raw.minY)} .. ${round(raw.maxX)},${round(raw.maxY)}`,
             points: landmarks.length,
             video: `${video.videoWidth}x${video.videoHeight}`,
+            read: `${read.width}x${read.height}`,
             stage: `${overlay.clientWidth}x${overlay.clientHeight}`,
           });
         }
@@ -511,6 +525,22 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             overlay.height = wantHeight;
           }
 
+          // Keep the read canvas the shape of the stage, so the picture the
+          // detector sees is the picture the user is framing themselves in.
+          const wantRead = Math.round((READ_HEIGHT * overlay.width) / overlay.height);
+          if (read.width !== wantRead) {
+            read.width = wantRead;
+            read.height = READ_HEIGHT;
+          }
+
+          const crop = coverCrop(video.videoWidth, video.videoHeight, read.width, read.height);
+          if (!crop) return;
+          readCtx.drawImage(
+            video,
+            crop.sx, crop.sy, crop.sw, crop.sh,
+            0, 0, read.width, read.height,
+          );
+
           // MediaPipe rejects a repeated timestamp, which happens whenever the
           // display refreshes faster than the camera produces frames.
           const timestamp = performance.now();
@@ -519,17 +549,10 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
           let result;
           try {
-            result = state.landmarker.detectForVideo(video, timestamp);
+            result = state.landmarker.detectForVideo(read, timestamp);
           } catch {
             return;
           }
-
-          const crop = coverCrop(
-            video.videoWidth,
-            video.videoHeight,
-            overlay.width,
-            overlay.height,
-          );
 
           const ctx = overlay.getContext('2d');
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -537,20 +560,14 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           // Selfie view. Mirroring the context mirrors the mesh with the
           // picture, instead of hoping two CSS transforms agree.
           ctx.setTransform(-1, 0, 0, 1, overlay.width, 0);
-          if (crop) {
-            ctx.drawImage(
-              video,
-              crop.sx, crop.sy, crop.sw, crop.sh,
-              0, 0, overlay.width, overlay.height,
-            );
-          }
+          ctx.drawImage(read, 0, 0, overlay.width, overlay.height);
 
           // Normalize before anything reads these: one browser hands back
           // pixel coordinates, and every consumer downstream assumes [0,1].
           const landmarks = normalizeLandmarks(
             primaryFace(result.faceLandmarks),
-            video.videoWidth,
-            video.videoHeight,
+            read.width,
+            read.height,
           );
           attempts += 1;
 
@@ -572,28 +589,26 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             });
           }
 
-          // What the user can see, in the coordinates they see it in. The
-          // framing advice is about the picture on screen, not about the part
-          // of the frame the crop threw away.
-          const shown = toCropSpace(landmarks, crop, video.videoWidth, video.videoHeight);
-
-          // The bitmap is now `dpr` device pixels per CSS pixel, so line widths
+          // The landmarks are already in the read canvas's coordinates, which
+          // is what is on the screen and what the cut-out will use. There is
+          // nothing left to convert between.
+          //
+          // The bitmap is `dpr` device pixels per CSS pixel, so line widths
           // divide by that to stay a fixed thickness on screen.
-          drawFaceMesh(ctx, shown, 1 / dpr);
-          // The cut-out reads the raw frame, so it keeps the raw landmarks.
+          drawFaceMesh(ctx, landmarks, 1 / dpr);
           state.landmarks = landmarks;
+          state.frame = read;
 
           watchForNonsense(landmarks);
-          const problem = framingHint(shown);
+          const problem = framingHint(landmarks);
 
           if (state.debug) {
             const b = boundsOf(landmarks);
-            const v = boundsOf(shown);
             showDebug([
               `points ${landmarks.length}  frames ${attempts}`,
-              `crop ${crop ? `${Math.round(crop.sw)}x${Math.round(crop.sh)}+${Math.round(crop.sx)}+${Math.round(crop.sy)}` : 'none'}`,
-              `frame ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
-              `shown ${round(v.minX)},${round(v.minY)} ${round(v.maxX)},${round(v.maxY)}`,
+              `read ${read.width}x${read.height}`,
+              `crop ${Math.round(crop.sw)}x${Math.round(crop.sh)}+${Math.round(crop.sx)}+${Math.round(crop.sy)}`,
+              `face ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
               problem ? `HINT ${problem}` : 'framing ok',
             ]);
           }
@@ -605,7 +620,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             // always shoot it.
             captureBtn.disabled = false;
             setHint(problem);
-            reportFraming(problem, shown);
+            reportFraming(problem, landmarks);
             return;
           }
 
@@ -648,18 +663,20 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
       }
 
       function takeShot() {
-        if (!state.landmarks || state.stage !== 'camera') return;
+        if (!state.landmarks || !state.frame || state.stage !== 'camera') return;
         const started = performance.now();
 
         let capture;
         try {
-          capture = cutOutFace(state.video, state.landmarks);
+          // The same bitmap the landmarks were measured against, so the mask
+          // cannot land anywhere but on the face it outlined.
+          capture = cutOutFace(state.frame, state.landmarks);
         } catch (err) {
           // Includes the empty-cutout guard: a blank face would otherwise sail
           // through to the tank and become a fish with no face on it.
           track('face_cutout_failed', {
             message: String(err?.message ?? err).slice(0, 120),
-            video: `${state.video.videoWidth}x${state.video.videoHeight}`,
+            frame: `${state.frame.width}x${state.frame.height}`,
           });
           stopCamera();
           renderGenerationFailed();

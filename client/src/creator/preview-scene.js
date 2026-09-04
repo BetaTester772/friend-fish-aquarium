@@ -22,13 +22,12 @@ export function createFishPreview({ canvas, look, faceCanvas }) {
   scene.add(key);
 
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 60);
-  camera.position.set(0.6, 0.5, 6.4);
-  camera.lookAt(0, 0, 0);
 
   const faceTexture = new THREE.CanvasTexture(faceCanvas);
   faceTexture.colorSpace = THREE.SRGBColorSpace;
 
   let group = null;
+  let extent = null;
   let disposed = false;
 
   function rebuild(nextLook) {
@@ -43,6 +42,43 @@ export function createFishPreview({ canvas, look, faceCanvas }) {
     // The preview is framed, not swimming: fixed size, gentle turntable.
     group.scale.setScalar(1.45);
     scene.add(group);
+    measure();
+    fitCamera();
+  }
+
+  /**
+   * How much room the fish needs, measured once per build rather than guessed.
+   * It turns on the spot, so its depth swings into view as width, and it bobs,
+   * so the sway is part of its height.
+   */
+  function measure() {
+    const box = new THREE.Box3().setFromObject(group);
+    const size = box.getSize(new THREE.Vector3());
+    extent = {
+      halfWidth: Math.max(size.x, size.z) / 2,
+      halfHeight: size.y / 2 + 0.12,
+      centreY: (box.min.y + box.max.y) / 2,
+    };
+  }
+
+  /**
+   * A fixed camera distance frames the fish only at the aspect it was chosen
+   * for. The creator's stage is 3:4 on a phone, where a fish that fitted a wide
+   * canvas runs off both sides — which is what put half a face outside the
+   * preview. Vertical field of view is fixed and horizontal follows the aspect,
+   * so the narrower the canvas the further back the camera has to stand.
+   */
+  function fitCamera() {
+    if (!extent) return;
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const distance = Math.max(
+      extent.halfHeight / Math.tan(vFov / 2),
+      extent.halfWidth / Math.tan(hFov / 2),
+    );
+    camera.position.set(0, extent.centreY, distance * 1.16); // a little air
+    camera.lookAt(0, extent.centreY, 0);
+    camera.updateProjectionMatrix();
   }
 
   rebuild(look);
@@ -53,6 +89,7 @@ export function createFishPreview({ canvas, look, faceCanvas }) {
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    fitCamera();
   }
 
   const observer = new ResizeObserver(resize);
