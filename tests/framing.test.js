@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createHoldTimer,
   framingHint,
+  isPlausible,
   boundsOf,
   rawBoundsOf,
   normalizeLandmarks,
@@ -234,4 +235,38 @@ test('reset abandons the hold outright', () => {
   hold.good(0);
   hold.reset();
   assert.equal(hold.isComplete(HOLD_MS * 2), false);
+});
+
+test('a face in the frame is a possible detection', () => {
+  assert.equal(isPlausible(mesh({ x: 0.3, y: 0.25, w: 0.4, h: 0.45 })), true);
+  assert.equal(
+    isPlausible(mesh({ x: 0.05, y: 0.1, w: 0.3, h: 0.35 })),
+    true,
+    'off to one side is still a face',
+  );
+  assert.equal(
+    isPlausible(mesh({ x: -0.08, y: 0.1, w: 0.4, h: 0.4 })),
+    true,
+    'an ear over the edge of the picture is normal',
+  );
+});
+
+test('landmarks strewn outside the picture are the detector, not the framing', () => {
+  // The shape a jumping mesh reports: centred at 0.11, 0.02 and two-thirds of
+  // the frame wide, which puts a third of it off the left and top edges.
+  const nonsense = mesh({ x: -0.235, y: -0.345, w: 0.69, h: 0.73 });
+  assert.equal(isPlausible(nonsense), false);
+  assert.equal(isPlausible(null), false);
+  assert.equal(isPlausible([]), false);
+});
+
+test('a stray point or two does not condemn a good frame', () => {
+  const withStrays = mesh({
+    x: 0.3,
+    y: 0.25,
+    w: 0.4,
+    h: 0.45,
+    strays: [{ x: -4, y: -3 }, { x: 9, y: 8 }],
+  });
+  assert.equal(isPlausible(withStrays), true, 'the trim absorbs them');
 });

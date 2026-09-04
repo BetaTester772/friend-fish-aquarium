@@ -8,11 +8,13 @@ import {
   drawFaceMesh,
   loadFaceLandmarker,
   primaryFace,
+  useCpuDelegate,
 } from './face-detector.js';
 import {
   boundsOf,
   createHoldTimer,
   framingHint,
+  isPlausible,
   normalizeLandmarks,
   rawBoundsOf,
 } from './framing.js';
@@ -27,6 +29,15 @@ import { createFishPreview } from './preview-scene.js';
 
 /** Two decimals is plenty for a framing measurement. */
 const round = (value) => Math.round(value * 100) / 100;
+
+/**
+ * `?debug=1` puts the detector's live numbers on the screen.
+ *
+ * Diagnosing this flow by screenshot and analytics has taken five rounds, none
+ * of which could see the device. Reading the figures off the phone directly is
+ * faster than any of them.
+ */
+const DEBUG = new URLSearchParams(location.search).has('debug');
 
 /**
  * "Add your fish": consent -> camera -> face mesh -> preview -> Add to tank
@@ -283,6 +294,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         dialog.replaceChildren();
 
         const stage = el('div', 'creator__stage');
+        const debug = DEBUG ? el('pre', 'creator__debug') : null;
         const video = document.createElement('video');
         video.className = 'creator__video';
         video.autoplay = true;
@@ -295,6 +307,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
         const hint = el('div', 'creator__hint', hintText);
         stage.append(video, overlay, hint);
+        if (debug) stage.append(debug);
 
         const capture = el('button', 'btn btn--primary', 'Capture');
         capture.type = 'button';
@@ -318,6 +331,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         state.overlay = overlay;
         state.hint = hint;
         state.captureBtn = capture;
+        state.debug = debug;
         state.stage = 'camera';
       }
 
@@ -405,6 +419,41 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         // behind it. Guessing at these from a screenshot is how the last two
         // rounds went; measured values end that.
         let reportedFraming = false;
+
+        // A GPU delegate that returns nonsense rather than failing outright is
+        // invisible from here except in its output, so watch the output. A few
+        // impossible frames are a person moving past the edge of the picture; a
+        // steady run of them is the detector, and the CPU path is the way out.
+        let impossibleFrames = 0;
+        let swappingDelegate = false;
+        function watchForNonsense(landmarks) {
+          if (isPlausible(landmarks)) {
+            impossibleFrames = 0;
+            return;
+          }
+          impossibleFrames += 1;
+          if (impossibleFrames < 20 || swappingDelegate || activeDelegate !== 'GPU') return;
+
+          swappingDelegate = true;
+          const box = boundsOf(landmarks);
+          track('face_detector_delegate_swapped', {
+            from: 'GPU',
+            box: `${round(box.minX)},${round(box.minY)} .. ${round(box.maxX)},${round(box.maxY)}`,
+          });
+          setHint('Adjusting for this phone…');
+          useCpuDelegate(state.landmarker)
+            .then((cpu) => {
+              if (state.stage === 'camera') state.landmarker = cpu;
+              impossibleFrames = 0;
+            })
+            .catch((err) => {
+              console.warn('[ffa] could not switch to the CPU detector', err);
+            })
+            .finally(() => {
+              swappingDelegate = false;
+            });
+        }
+
         function reportFraming(hint, landmarks) {
           if (reportedFraming) return;
           reportedFraming = true;
@@ -475,6 +524,9 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             hold.bad(timestamp);
             captureBtn.disabled = true; // nothing to capture
             setHint('Center your face in the frame.');
+            // The no-face case is the one worth reading off the screen: it says
+            // whether the camera is even producing frames.
+            showDebug(['no face', `frames ${attempts}`]);
             return;
           }
 
@@ -496,7 +548,20 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           drawFaceMesh(ctx, landmarks, coverScale);
           state.landmarks = landmarks;
 
+          watchForNonsense(landmarks);
           const problem = framingHint(landmarks);
+
+          if (state.debug) {
+            const b = boundsOf(landmarks);
+            const r = rawBoundsOf(landmarks);
+            showDebug([
+              `points ${landmarks.length}  frames ${attempts}`,
+              `box  ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
+              `raw  ${round(r.minX)},${round(r.minY)} ${round(r.maxX)},${round(r.maxY)}`,
+              `size ${round(b.maxX - b.minX)}x${round(b.maxY - b.minY)}`,
+              problem ? `HINT ${problem}` : 'framing ok',
+            ]);
+          }
           if (problem) {
             hold.bad(timestamp);
             // The hint is advice, not a veto. Disabling the button here meant
@@ -523,6 +588,20 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           // something the user can influence rather than a dead screen.
           setHint(`Hold still… ${Math.ceil(hold.remaining(timestamp) / 300)}`);
         };
+
+        /**
+         * Every readout carries the frame geometry, because a wrong scale there
+         * is what makes every other number wrong.
+         */
+        function showDebug(lines) {
+          if (!state.debug) return;
+          state.debug.textContent = [
+            `video ${video.videoWidth}x${video.videoHeight} ${video.readyState}`,
+            `stage ${overlay.clientWidth}x${overlay.clientHeight}`,
+            `delegate ${activeDelegate ?? '?'}  odd ${impossibleFrames}`,
+            ...lines,
+          ].join('\n');
+        }
 
         function setHint(text, tone) {
           hint.textContent = text;

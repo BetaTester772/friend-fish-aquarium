@@ -95,6 +95,25 @@ export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
  * that was never going to fire. The detector is now asked for one face and we
  * use it.
  */
+/**
+ * Whether a detection is physically possible.
+ *
+ * A face in front of the camera lands inside the frame, give or take an ear off
+ * the edge. Landmarks strewn a third of a frame beyond it are not a badly
+ * framed face, they are a detector returning noise — which is what a jumping
+ * mesh looks like from the inside. The trimmed bounds are used so that one
+ * stray point cannot condemn an otherwise good frame.
+ */
+export function isPlausible(landmarks) {
+  if (!landmarks?.length) return false;
+  const { minX, minY, maxX, maxY } = boundsOf(landmarks);
+  const inFrame = (v) => v > -0.25 && v < 1.25;
+  if (![minX, minY, maxX, maxY].every(inFrame)) return false;
+  const width = maxX - minX;
+  const height = maxY - minY;
+  return width > 0.02 && height > 0.02;
+}
+
 export function framingHint(landmarks) {
   const { minX, minY, maxX, maxY } = boundsOf(landmarks);
   const width = maxX - minX;

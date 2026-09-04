@@ -65,6 +65,29 @@ export function loadFaceLandmarker() {
   return landmarkerPromise;
 }
 
+/**
+ * Rebuilds the detector on the CPU delegate.
+ *
+ * Failing to create the GPU delegate is the easy case — it throws and the code
+ * above catches it. The hard case is a GPU delegate that creates fine and then
+ * returns garbage: on some Android GPUs the mesh lands nowhere near the face
+ * and jumps every frame, with no error anywhere. Nothing can be inferred about
+ * that from the outside, so the caller watches the output instead and calls
+ * this when the numbers stop being possible.
+ */
+export async function useCpuDelegate(previous) {
+  const fileset = await FilesetResolver.forVisionTasks('/mediapipe-wasm');
+  const landmarker = await createWith(fileset, 'CPU');
+  activeDelegate = 'CPU';
+  landmarkerPromise = Promise.resolve(landmarker);
+  try {
+    previous?.close();
+  } catch {
+    // A detector we are throwing away failing to close is not worth a word.
+  }
+  return landmarker;
+}
+
 /** Ordered outline of the face, derived from the model's FACE_OVAL connections. */
 export function faceOvalIndices() {
   const connections = FaceLandmarker.FACE_LANDMARKS_FACE_OVAL;
