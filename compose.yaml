@@ -1,0 +1,44 @@
+# Self-hosting stack: the app plus Caddy, which fetches and renews a Let's
+# Encrypt certificate on its own.
+#
+# HTTPS is not optional here: browsers refuse getUserMedia on an insecure
+# origin, so without a certificate nobody can add a fish.
+#
+#   FFA_DOMAIN=tank.example.com FFA_EMAIL=you@example.com docker compose up -d
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Tells the app the browser's original request was https, so the session
+      # cookie keeps its Secure flag behind Caddy.
+      FFA_TRUST_PROXY: "1"
+      FFA_DATA_DIR: /data
+      PORT: "8787"
+    volumes:
+      # The SQLite database and the stored face images. Back this up.
+      - tank-data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FFA_DOMAIN: ${FFA_DOMAIN:?set FFA_DOMAIN to the hostname you are serving}
+      FFA_EMAIL: ${FFA_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  tank-data:
+  caddy-data:
+  caddy-config:
