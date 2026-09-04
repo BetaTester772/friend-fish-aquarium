@@ -44,6 +44,14 @@ test('a forehead cropped by the top edge is still accepted', () => {
   assert.equal(framingHint(face({ x: 0.3, y: -0.04, w: 0.4, h: 0.5 }), 1), null);
 });
 
+test('a large face is not refused for being too close', () => {
+  // This rule fired in the field on a face filling barely half the frame, and
+  // there was nothing the person could do about it. A big face is not a problem
+  // worth refusing a photo over: the cutout crops to the face bounds anyway.
+  assert.equal(framingHint(centred(0.9, 0.95)), null);
+  assert.equal(framingHint(face({ x: 0.02, y: 0.02, w: 0.96, h: 0.96 })), null);
+});
+
 test('a genuinely tiny face is asked to come closer', () => {
   assert.match(framingHint(centred(0.06, 0.08), 1), /closer/);
 });

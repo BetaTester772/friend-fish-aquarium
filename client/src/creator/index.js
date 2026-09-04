@@ -9,7 +9,7 @@ import {
   loadFaceLandmarker,
   primaryFace,
 } from './face-detector.js';
-import { createHoldTimer, framingHint, HOLD_MS } from './framing.js';
+import { boundsOf, createHoldTimer, framingHint } from './framing.js';
 import {
   androidChromeUrl,
   canJumpToRealBrowser,
@@ -18,6 +18,9 @@ import {
 } from './in-app-browser.js';
 import { cutOutFace } from './face-cutout.js';
 import { createFishPreview } from './preview-scene.js';
+
+/** Two decimals is plenty for a framing measurement. */
+const round = (value) => Math.round(value * 100) / 100;
 
 /**
  * "Add your fish": consent -> camera -> face mesh -> preview -> Add to tank
@@ -392,6 +395,25 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         const detectStarted = performance.now();
         let reportedDetection = false;
 
+        // Report the first framing rejection of this session, with the numbers
+        // behind it. Guessing at these from a screenshot is how the last two
+        // rounds went; measured values end that.
+        let reportedFraming = false;
+        function reportFraming(hint, landmarks) {
+          if (reportedFraming) return;
+          reportedFraming = true;
+          const { minX, minY, maxX, maxY } = boundsOf(landmarks);
+          track('face_framing_rejected', {
+            hint,
+            w: round(maxX - minX),
+            h: round(maxY - minY),
+            cx: round((minX + maxX) / 2),
+            cy: round((minY + maxY) / 2),
+            video: `${video.videoWidth}x${video.videoHeight}`,
+            stage: `${overlay.clientWidth}x${overlay.clientHeight}`,
+          });
+        }
+
         const tick = () => {
           state.rafId = requestAnimationFrame(tick);
 
@@ -434,7 +456,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
           if (!landmarks) {
             hold.bad(timestamp);
-            captureBtn.disabled = true;
+            captureBtn.disabled = true; // nothing to capture
             setHint('Center your face in the frame.');
             return;
           }
@@ -460,8 +482,13 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           const problem = framingHint(landmarks);
           if (problem) {
             hold.bad(timestamp);
-            captureBtn.disabled = true;
+            // The hint is advice, not a veto. Disabling the button here meant
+            // one wrong judgement left someone stuck in front of a camera with
+            // no way to take the photo themselves. If there is a face, they can
+            // always shoot it.
+            captureBtn.disabled = false;
             setHint(problem);
+            reportFraming(problem, landmarks);
             return;
           }
 

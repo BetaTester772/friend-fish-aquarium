@@ -50,7 +50,11 @@ export function framingHint(landmarks) {
   const height = maxY - minY;
 
   if (width < 0.12 && height < 0.15) return 'Come a bit closer.';
-  if (width > 0.98 || height > 1.05) return 'A little further back.';
+
+  // There is no "too close" rule. A large face is not a problem worth refusing
+  // a photo over — the cutout crops to the face bounds anyway, so the worst
+  // case is a tighter crop — and in the field this rule fired on faces that
+  // filled barely half the frame, which nobody could act on.
 
   const centreX = (minX + maxX) / 2;
   const centreY = (minY + maxY) / 2;
