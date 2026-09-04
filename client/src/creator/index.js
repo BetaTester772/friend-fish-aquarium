@@ -534,7 +534,13 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         let capture;
         try {
           capture = cutOutFace(state.video, state.landmarks);
-        } catch {
+        } catch (err) {
+          // Includes the empty-cutout guard: a blank face would otherwise sail
+          // through to the tank and become a fish with no face on it.
+          track('face_cutout_failed', {
+            message: String(err?.message ?? err).slice(0, 120),
+            video: `${state.video.videoWidth}x${state.video.videoHeight}`,
+          });
           stopCamera();
           renderGenerationFailed();
           return;

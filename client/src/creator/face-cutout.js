@@ -75,8 +75,24 @@ export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}
   ctx.drawImage(mask, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
 
+  // How much of the result is actually opaque. A cutout can come back blank
+  // when the mask lands outside the frame — which is what a coordinate bug
+  // downstream looks like — and a blank face makes a fish with a blank face,
+  // which is worse than refusing the shot.
+  const { data } = ctx.getImageData(0, 0, size, size);
+  let opaque = 0;
+  for (let i = 3; i < data.length; i += 4 * 16) {
+    if (data[i] > 40) opaque += 1;
+  }
+  const coverage = opaque / (data.length / (4 * 16));
+
+  if (coverage < 0.02) {
+    throw new Error('The face cut-out came out empty');
+  }
+
   return {
     canvas: out,
+    coverage,
     dataUrl: out.toDataURL('image/png'),
   };
 }

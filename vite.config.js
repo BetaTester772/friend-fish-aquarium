@@ -11,6 +11,11 @@ const proxied = ['/api', '/faces'];
 
 export default defineConfig({
   root: 'client',
+  // Stamped into the bundle so a bug report can be tied to the code that
+  // produced it. Three rounds were spent unsure whether a fix was even running.
+  define: {
+    __BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+  },
   publicDir: '../public',
   build: {
     outDir: '../dist',

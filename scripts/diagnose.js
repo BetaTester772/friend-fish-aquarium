@@ -51,8 +51,21 @@ console.table(
   })),
 );
 
+// Which build produced these reports. Without it there is no way to tell a
+// fix that did not work from a fix that was never deployed.
+const builds = await db.all(
+  `SELECT json_extract(props,'$.build') AS build, COUNT(*) AS n, MAX(${local}) AS last
+     FROM analytics_events WHERE name = 'tank_viewed' AND build IS NOT NULL
+    GROUP BY build ORDER BY last DESC LIMIT 5`,
+);
+if (builds.length) {
+  console.log('\nClient builds people are running\n');
+  console.table(builds);
+}
+
 const troubles = [
   'camera_playback_blocked',
+  'face_cutout_failed',
   'camera_stalled',
   'face_detector_failed',
   'webgl_unavailable',
