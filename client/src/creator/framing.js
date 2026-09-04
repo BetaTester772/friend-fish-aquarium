@@ -12,18 +12,69 @@ export const HOLD_MS = 900;
 /** A blink or a wobble should not restart the countdown. */
 export const GRACE_MS = 350;
 
-export function boundsOf(landmarks) {
-  let minX = 1;
-  let minY = 1;
-  let maxX = 0;
-  let maxY = 0;
+/**
+ * Bounds that a few bad landmarks cannot dictate.
+ *
+ * The detector on at least one Android browser returns a handful of wild
+ * values among otherwise sane ones — a point at 794 where the rest sit between
+ * 0.3 and 0.7. A plain min/max then describes the outliers rather than the
+ * face, which is how a perfectly centred face came to report its centre at
+ * (0.11, 0.02): the box was being stretched to the strays.
+ *
+ * Trimming a couple of percent from each end throws those away. A face mesh has
+ * hundreds of points, so losing the extreme few costs nothing real.
+ */
+export function boundsOf(landmarks, trim = 0.02) {
+  const xs = [];
+  const ys = [];
   for (const point of landmarks) {
-    if (point.x < minX) minX = point.x;
-    if (point.y < minY) minY = point.y;
-    if (point.x > maxX) maxX = point.x;
-    if (point.y > maxY) maxY = point.y;
+    if (Number.isFinite(point.x)) xs.push(point.x);
+    if (Number.isFinite(point.y)) ys.push(point.y);
   }
-  return { minX, minY, maxX, maxY };
+  if (xs.length === 0 || ys.length === 0) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+
+  xs.sort((a, b) => a - b);
+  ys.sort((a, b) => a - b);
+  const cut = (list) => Math.min(Math.floor(list.length * trim), Math.floor((list.length - 1) / 2));
+
+  const cx = cut(xs);
+  const cy = cut(ys);
+  return {
+    minX: xs[cx],
+    maxX: xs[xs.length - 1 - cx],
+    minY: ys[cy],
+    maxY: ys[ys.length - 1 - cy],
+  };
+}
+
+/** Raw extremes, for reporting what the detector actually produced. */
+export function rawBoundsOf(landmarks) {
+  return boundsOf(landmarks, 0);
+}
+
+/**
+ * Coerces landmarks into the [0,1] space the rest of the pipeline assumes.
+ *
+ * The task API documents normalized coordinates and that is what desktop
+ * returns. Judgement uses the trimmed bounds, not the raw maximum: keying off a
+ * single stray value meant one outlier could convince this that a properly
+ * normalized frame was in pixels, and dividing by the frame size then collapsed
+ * every real landmark to near zero — which took the mesh, the crop and the
+ * framing rules down together.
+ */
+export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
+  if (!landmarks?.length || !frameWidth || !frameHeight) return landmarks;
+
+  const { maxX, maxY } = boundsOf(landmarks);
+  if (maxX <= 1.5 && maxY <= 1.5) return landmarks;
+
+  return landmarks.map((point) => ({
+    ...point,
+    x: point.x / frameWidth,
+    y: point.y / frameHeight,
+  }));
 }
 
 /**
@@ -37,16 +88,69 @@ export function boundsOf(landmarks) {
  * Position is judged by the centre of the face rather than its bounding box,
  * because a forehead cropped by the top edge is normal on a phone held close
  * and is not a reason to refuse the shot.
+ *
+ * There is deliberately no "too many faces" rule. One used to live here and it
+ * blocked the shutter outright, so a single spurious detection — which the
+ * detector produced routinely — left people holding still in front of a camera
+ * that was never going to fire. The detector is now asked for one face and we
+ * use it.
  */
-export function framingHint(landmarks, faceCount) {
-  if (faceCount > 1) return 'Just one face please — using the closest one.';
+/**
+ * Whether a detection is physically possible.
+ *
+ * A face in front of the camera lands inside the frame, give or take an ear off
+ * the edge. Landmarks strewn a third of a frame beyond it are not a badly
+ * framed face, they are a detector returning noise — which is what a jumping
+ * mesh looks like from the inside. The trimmed bounds are used so that one
+ * stray point cannot condemn an otherwise good frame.
+ */
+export function isPlausible(landmarks) {
+  if (!landmarks?.length) return false;
+  const { minX, minY, maxX, maxY } = boundsOf(landmarks);
+  const inFrame = (v) => v > -0.25 && v < 1.25;
+  if (![minX, minY, maxX, maxY].every(inFrame)) return false;
+  const width = maxX - minX;
+  const height = maxY - minY;
+  return width > 0.02 && height > 0.02;
+}
 
+/**
+ * The part of a camera frame an `object-fit: cover` box actually shows.
+ *
+ * A 4:3 camera in a 3:4 box shows only the middle 56% of the picture, so a face
+ * centred on screen is nowhere near centred in the frame the detector reads.
+ * Returning the crop explicitly lets the preview, the mesh and the framing
+ * advice all work in the coordinates the user can actually see.
+ */
+export function coverCrop(frameWidth, frameHeight, boxWidth, boxHeight) {
+  if (!frameWidth || !frameHeight || !boxWidth || !boxHeight) return null;
+  const scale = Math.max(boxWidth / frameWidth, boxHeight / frameHeight);
+  const sw = Math.min(frameWidth, boxWidth / scale);
+  const sh = Math.min(frameHeight, boxHeight / scale);
+  return { sx: (frameWidth - sw) / 2, sy: (frameHeight - sh) / 2, sw, sh };
+}
+
+/** Re-normalizes landmarks against the visible crop rather than the full frame. */
+export function toCropSpace(landmarks, crop, frameWidth, frameHeight) {
+  if (!crop || !landmarks?.length) return landmarks;
+  return landmarks.map((point) => ({
+    ...point,
+    x: (point.x * frameWidth - crop.sx) / crop.sw,
+    y: (point.y * frameHeight - crop.sy) / crop.sh,
+  }));
+}
+
+export function framingHint(landmarks) {
   const { minX, minY, maxX, maxY } = boundsOf(landmarks);
   const width = maxX - minX;
   const height = maxY - minY;
 
   if (width < 0.12 && height < 0.15) return 'Come a bit closer.';
-  if (width > 0.98 || height > 1.05) return 'A little further back.';
+
+  // There is no "too close" rule. A large face is not a problem worth refusing
+  // a photo over — the cutout crops to the face bounds anyway, so the worst
+  // case is a tighter crop — and in the field this rule fired on faces that
+  // filled barely half the frame, which nobody could act on.
 
   const centreX = (minX + maxX) / 2;
   const centreY = (minY + maxY) / 2;

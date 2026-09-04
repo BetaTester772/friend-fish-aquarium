@@ -8,8 +8,17 @@ import {
   drawFaceMesh,
   loadFaceLandmarker,
   primaryFace,
+  useCpuDelegate,
 } from './face-detector.js';
-import { createHoldTimer, framingHint, HOLD_MS } from './framing.js';
+import {
+  boundsOf,
+  coverCrop,
+  createHoldTimer,
+  framingHint,
+  isPlausible,
+  normalizeLandmarks,
+  rawBoundsOf,
+} from './framing.js';
 import {
   androidChromeUrl,
   canJumpToRealBrowser,
@@ -18,6 +27,18 @@ import {
 } from './in-app-browser.js';
 import { cutOutFace } from './face-cutout.js';
 import { createFishPreview } from './preview-scene.js';
+
+/** Two decimals is plenty for a framing measurement. */
+const round = (value) => Math.round(value * 100) / 100;
+
+/**
+ * `?debug=1` puts the detector's live numbers on the screen.
+ *
+ * Diagnosing this flow by screenshot and analytics has taken five rounds, none
+ * of which could see the device. Reading the figures off the phone directly is
+ * faster than any of them.
+ */
+const DEBUG = new URLSearchParams(location.search).has('debug');
 
 /**
  * "Add your fish": consent -> camera -> face mesh -> preview -> Add to tank
@@ -274,18 +295,21 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         dialog.replaceChildren();
 
         const stage = el('div', 'creator__stage');
+        const debug = DEBUG ? el('pre', 'creator__debug') : null;
         const video = document.createElement('video');
         video.className = 'creator__video';
         video.autoplay = true;
         video.playsInline = true;
         video.muted = true;
 
+        // The canvas paints the picture as well as the mesh, so it is sized
+        // and mirrored in `tick` rather than by CSS.
         const overlay = document.createElement('canvas');
         overlay.className = 'creator__overlay';
-        overlay.style.transform = 'scaleX(-1)'; // match the mirrored video
 
         const hint = el('div', 'creator__hint', hintText);
         stage.append(video, overlay, hint);
+        if (debug) stage.append(debug);
 
         const capture = el('button', 'btn btn--primary', 'Capture');
         capture.type = 'button';
@@ -309,6 +333,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         state.overlay = overlay;
         state.hint = hint;
         state.captureBtn = capture;
+        state.debug = debug;
         state.stage = 'camera';
       }
 
@@ -385,12 +410,86 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
         // Times, not frame counts, so a slow phone behaves like a fast laptop.
         const hold = createHoldTimer();
+
+        // The frame the detector reads, drawn by us.
+        //
+        // Handed the <video> element directly, MediaPipe normalizes its output
+        // against dimensions the browser reports for it — and on this phone it
+        // came back with the chin 11% below the bottom of a frame the chin was
+        // plainly inside. Nothing downstream can recover from coordinates
+        // measured against a picture nobody else has. So the video goes into a
+        // canvas of our own first, and that canvas is what gets detected,
+        // displayed and cut out: one bitmap, whose dimensions are not a matter
+        // of opinion.
+        const READ_HEIGHT = 640;
+        const read = document.createElement('canvas');
+        const readCtx = read.getContext('2d');
         let stalled = false;
         const loopStarted = performance.now();
         let attempts = 0;
         let lastTimestamp = -1;
         const detectStarted = performance.now();
         let reportedDetection = false;
+
+        // Report the first framing rejection of this session, with the numbers
+        // behind it. Guessing at these from a screenshot is how the last two
+        // rounds went; measured values end that.
+        let reportedFraming = false;
+
+        // A GPU delegate that returns nonsense rather than failing outright is
+        // invisible from here except in its output, so watch the output. A few
+        // impossible frames are a person moving past the edge of the picture; a
+        // steady run of them is the detector, and the CPU path is the way out.
+        let impossibleFrames = 0;
+        let swappingDelegate = false;
+        function watchForNonsense(landmarks) {
+          if (isPlausible(landmarks)) {
+            impossibleFrames = 0;
+            return;
+          }
+          impossibleFrames += 1;
+          if (impossibleFrames < 20 || swappingDelegate || activeDelegate !== 'GPU') return;
+
+          swappingDelegate = true;
+          const box = boundsOf(landmarks);
+          track('face_detector_delegate_swapped', {
+            from: 'GPU',
+            box: `${round(box.minX)},${round(box.minY)} .. ${round(box.maxX)},${round(box.maxY)}`,
+          });
+          setHint('Adjusting for this phone…');
+          useCpuDelegate(state.landmarker)
+            .then((cpu) => {
+              if (state.stage === 'camera') state.landmarker = cpu;
+              impossibleFrames = 0;
+            })
+            .catch((err) => {
+              console.warn('[ffa] could not switch to the CPU detector', err);
+            })
+            .finally(() => {
+              swappingDelegate = false;
+            });
+        }
+
+        function reportFraming(hint, landmarks) {
+          if (reportedFraming) return;
+          reportedFraming = true;
+          const { minX, minY, maxX, maxY } = boundsOf(landmarks);
+          const raw = rawBoundsOf(landmarks);
+          track('face_framing_rejected', {
+            hint,
+            w: round(maxX - minX),
+            h: round(maxY - minY),
+            cx: round((minX + maxX) / 2),
+            cy: round((minY + maxY) / 2),
+            // The untrimmed extremes alongside them, so a gap between the two
+            // says outliers outright instead of leaving it to be inferred.
+            raw: `${round(raw.minX)},${round(raw.minY)} .. ${round(raw.maxX)},${round(raw.maxY)}`,
+            points: landmarks.length,
+            video: `${video.videoWidth}x${video.videoHeight}`,
+            read: `${read.width}x${read.height}`,
+            stage: `${overlay.clientWidth}x${overlay.clientHeight}`,
+          });
+        }
 
         const tick = () => {
           state.rafId = requestAnimationFrame(tick);
@@ -408,10 +507,39 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           }
           stalled = false;
 
-          if (overlay.width !== video.videoWidth) {
-            overlay.width = video.videoWidth;
-            overlay.height = video.videoHeight;
+          // One canvas, one coordinate space.
+          //
+          // Until now the picture came from the <video> and the mesh from a
+          // transparent <canvas> on top, and they lined up only if the browser
+          // applied `object-fit: cover` to both replaced elements identically
+          // and mirrored both the same way. On the phone they did not, and the
+          // mesh landed off the face while every number the detector reported
+          // was correct. So the canvas now draws the frame itself and the mesh
+          // over it, through the same crop and the same mirror: they cannot
+          // disagree, whatever the browser thinks the video's dimensions are.
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const wantWidth = Math.round(overlay.clientWidth * dpr);
+          const wantHeight = Math.round(overlay.clientHeight * dpr);
+          if (wantWidth && (overlay.width !== wantWidth || overlay.height !== wantHeight)) {
+            overlay.width = wantWidth;
+            overlay.height = wantHeight;
           }
+
+          // Keep the read canvas the shape of the stage, so the picture the
+          // detector sees is the picture the user is framing themselves in.
+          const wantRead = Math.round((READ_HEIGHT * overlay.width) / overlay.height);
+          if (read.width !== wantRead) {
+            read.width = wantRead;
+            read.height = READ_HEIGHT;
+          }
+
+          const crop = coverCrop(video.videoWidth, video.videoHeight, read.width, read.height);
+          if (!crop) return;
+          readCtx.drawImage(
+            video,
+            crop.sx, crop.sy, crop.sw, crop.sh,
+            0, 0, read.width, read.height,
+          );
 
           // MediaPipe rejects a repeated timestamp, which happens whenever the
           // display refreshes faster than the camera produces frames.
@@ -421,21 +549,35 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
           let result;
           try {
-            result = state.landmarker.detectForVideo(video, timestamp);
+            result = state.landmarker.detectForVideo(read, timestamp);
           } catch {
             return;
           }
 
           const ctx = overlay.getContext('2d');
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.clearRect(0, 0, overlay.width, overlay.height);
+          // Selfie view. Mirroring the context mirrors the mesh with the
+          // picture, instead of hoping two CSS transforms agree.
+          ctx.setTransform(-1, 0, 0, 1, overlay.width, 0);
+          ctx.drawImage(read, 0, 0, overlay.width, overlay.height);
 
-          const landmarks = primaryFace(result.faceLandmarks);
+          // Normalize before anything reads these: one browser hands back
+          // pixel coordinates, and every consumer downstream assumes [0,1].
+          const landmarks = normalizeLandmarks(
+            primaryFace(result.faceLandmarks),
+            read.width,
+            read.height,
+          );
           attempts += 1;
 
           if (!landmarks) {
             hold.bad(timestamp);
-            captureBtn.disabled = true;
+            captureBtn.disabled = true; // nothing to capture
             setHint('Center your face in the frame.');
+            // The no-face case is the one worth reading off the screen: it says
+            // whether the camera is even producing frames.
+            showDebug(['no face', `frames ${attempts}`]);
             return;
           }
 
@@ -447,24 +589,38 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             });
           }
 
-          // Screen pixels per bitmap pixel, matching the CSS `object-fit:
-          // cover`. Without it the strokes vanish on a high-resolution camera.
-          const coverScale =
-            Math.max(
-              overlay.clientWidth / overlay.width,
-              overlay.clientHeight / overlay.height,
-            ) || 1;
-          drawFaceMesh(ctx, landmarks, coverScale);
+          // The landmarks are already in the read canvas's coordinates, which
+          // is what is on the screen and what the cut-out will use. There is
+          // nothing left to convert between.
+          //
+          // The bitmap is `dpr` device pixels per CSS pixel, so line widths
+          // divide by that to stay a fixed thickness on screen.
+          drawFaceMesh(ctx, landmarks, 1 / dpr);
           state.landmarks = landmarks;
+          state.frame = read;
 
-          const problem = framingHint(landmarks, result.faceLandmarks.length);
+          watchForNonsense(landmarks);
+          const problem = framingHint(landmarks);
+
+          if (state.debug) {
+            const b = boundsOf(landmarks);
+            showDebug([
+              `points ${landmarks.length}  frames ${attempts}`,
+              `read ${read.width}x${read.height}`,
+              `crop ${Math.round(crop.sw)}x${Math.round(crop.sh)}+${Math.round(crop.sx)}+${Math.round(crop.sy)}`,
+              `face ${round(b.minX)},${round(b.minY)} ${round(b.maxX)},${round(b.maxY)}`,
+              problem ? `HINT ${problem}` : 'framing ok',
+            ]);
+          }
           if (problem) {
             hold.bad(timestamp);
-            // "Too many faces" is a warning, not a blocker — we already picked
-            // the biggest one, so let them shoot it manually if they want.
-            const crowded = result.faceLandmarks.length > 1;
-            captureBtn.disabled = !crowded;
+            // The hint is advice, not a veto. Disabling the button here meant
+            // one wrong judgement left someone stuck in front of a camera with
+            // no way to take the photo themselves. If there is a face, they can
+            // always shoot it.
+            captureBtn.disabled = false;
             setHint(problem);
+            reportFraming(problem, landmarks);
             return;
           }
 
@@ -483,6 +639,20 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           setHint(`Hold still… ${Math.ceil(hold.remaining(timestamp) / 300)}`);
         };
 
+        /**
+         * Every readout carries the frame geometry, because a wrong scale there
+         * is what makes every other number wrong.
+         */
+        function showDebug(lines) {
+          if (!state.debug) return;
+          state.debug.textContent = [
+            `video ${video.videoWidth}x${video.videoHeight} ${video.readyState}`,
+            `stage ${overlay.clientWidth}x${overlay.clientHeight}`,
+            `delegate ${activeDelegate ?? '?'}  odd ${impossibleFrames}`,
+            ...lines,
+          ].join('\n');
+        }
+
         function setHint(text, tone) {
           hint.textContent = text;
           if (tone) hint.dataset.tone = tone;
@@ -493,13 +663,21 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
       }
 
       function takeShot() {
-        if (!state.landmarks || state.stage !== 'camera') return;
+        if (!state.landmarks || !state.frame || state.stage !== 'camera') return;
         const started = performance.now();
 
         let capture;
         try {
-          capture = cutOutFace(state.video, state.landmarks);
-        } catch {
+          // The same bitmap the landmarks were measured against, so the mask
+          // cannot land anywhere but on the face it outlined.
+          capture = cutOutFace(state.frame, state.landmarks);
+        } catch (err) {
+          // Includes the empty-cutout guard: a blank face would otherwise sail
+          // through to the tank and become a fish with no face on it.
+          track('face_cutout_failed', {
+            message: String(err?.message ?? err).slice(0, 120),
+            frame: `${state.frame.width}x${state.frame.height}`,
+          });
           stopCamera();
           renderGenerationFailed();
           return;

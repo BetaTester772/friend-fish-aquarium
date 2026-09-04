@@ -21,7 +21,17 @@ function createWith(fileset, delegate) {
       delegate,
     },
     runningMode: 'VIDEO',
-    numFaces: 2, // enough to notice a second person in frame
+    // Exactly one. Asking for two does not "notice a second person" so much as
+    // invite the model to find one: with a spare slot and the default 0.5
+    // confidence it will happily promote a chair or a shadow, and a phone in a
+    // normal room reliably reported two faces for a single person. Since the
+    // largest face is the one we use anyway (spec §10), one is all we need.
+    numFaces: 1,
+    // A touch above the default, so a marginal detection does not flicker in
+    // and out and keep resetting the capture hold.
+    minFaceDetectionConfidence: 0.6,
+    minFacePresenceConfidence: 0.6,
+    minTrackingConfidence: 0.6,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,
   });
@@ -53,6 +63,29 @@ export function loadFaceLandmarker() {
   });
 
   return landmarkerPromise;
+}
+
+/**
+ * Rebuilds the detector on the CPU delegate.
+ *
+ * Failing to create the GPU delegate is the easy case — it throws and the code
+ * above catches it. The hard case is a GPU delegate that creates fine and then
+ * returns garbage: on some Android GPUs the mesh lands nowhere near the face
+ * and jumps every frame, with no error anywhere. Nothing can be inferred about
+ * that from the outside, so the caller watches the output instead and calls
+ * this when the numbers stop being possible.
+ */
+export async function useCpuDelegate(previous) {
+  const fileset = await FilesetResolver.forVisionTasks('/mediapipe-wasm');
+  const landmarker = await createWith(fileset, 'CPU');
+  activeDelegate = 'CPU';
+  landmarkerPromise = Promise.resolve(landmarker);
+  try {
+    previous?.close();
+  } catch {
+    // A detector we are throwing away failing to close is not worth a word.
+  }
+  return landmarker;
 }
 
 /** Ordered outline of the face, derived from the model's FACE_OVAL connections. */

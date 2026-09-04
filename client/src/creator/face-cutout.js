@@ -10,17 +10,25 @@ import { boundsOf } from './framing.js';
  * the camera frame itself. The size is deliberately modest — the PNG is stored
  * as a row in the database, not as a file.
  */
-export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}) {
-  const frameWidth = video.videoWidth;
-  const frameHeight = video.videoHeight;
+export function cutOutFace(frame, landmarks, { size = 384, padding = 0.18 } = {}) {
+  // A <video> or a <canvas>: the creator hands us the canvas it detected on, so
+  // the mask is measured against exactly the bitmap the landmarks came from.
+  const frameWidth = frame.videoWidth || frame.width;
+  const frameHeight = frame.videoHeight || frame.height;
   if (!frameWidth || !frameHeight) {
     throw new Error('Camera frame is not ready yet');
   }
 
+  // Clamped into the frame: a single stray landmark would otherwise drag the
+  // mask polygon off to infinity and mask away the entire face.
+  const clamp = (value, max) => Math.min(max, Math.max(0, value));
   const oval = faceOvalIndices()
     .map((index) => landmarks[index])
-    .filter(Boolean)
-    .map((point) => ({ x: point.x * frameWidth, y: point.y * frameHeight }));
+    .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+    .map((point) => ({
+      x: clamp(point.x * frameWidth, frameWidth),
+      y: clamp(point.y * frameHeight, frameHeight),
+    }));
 
   if (oval.length < 8) throw new Error('Face outline was incomplete');
 
@@ -52,7 +60,7 @@ export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}
   const out = document.createElement('canvas');
   out.width = out.height = size;
   const ctx = out.getContext('2d');
-  ctx.drawImage(video, left, top, side, side, 0, 0, size, size);
+  ctx.drawImage(frame, left, top, side, side, 0, 0, size, size);
 
   // 2. A blurred white oval as the alpha mask, in the same coordinate space.
   const mask = document.createElement('canvas');
@@ -75,8 +83,24 @@ export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}
   ctx.drawImage(mask, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
 
+  // How much of the result is actually opaque. A cutout can come back blank
+  // when the mask lands outside the frame — which is what a coordinate bug
+  // downstream looks like — and a blank face makes a fish with a blank face,
+  // which is worse than refusing the shot.
+  const { data } = ctx.getImageData(0, 0, size, size);
+  let opaque = 0;
+  for (let i = 3; i < data.length; i += 4 * 16) {
+    if (data[i] > 40) opaque += 1;
+  }
+  const coverage = opaque / (data.length / (4 * 16));
+
+  if (coverage < 0.02) {
+    throw new Error('The face cut-out came out empty');
+  }
+
   return {
     canvas: out,
+    coverage,
     dataUrl: out.toDataURL('image/png'),
   };
 }

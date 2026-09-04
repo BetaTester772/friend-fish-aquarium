@@ -29,6 +29,7 @@ async function main() {
   state.hydrate(snapshot);
 
   track('tank_viewed', {
+    build: typeof __BUILD__ === 'string' ? __BUILD__ : 'dev',
     tank_id: snapshot.tank.id,
     fish_count: snapshot.fish.length,
     current_user_has_fish: Boolean(snapshot.viewer?.fishId),
