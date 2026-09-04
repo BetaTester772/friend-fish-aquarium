@@ -2,7 +2,7 @@
  * Copies the MediaPipe vision wasm runtime out of node_modules into
  * public/mediapipe-wasm so the face landmarker loads entirely from our own
  * origin — no third-party CDN, which keeps the camera pipeline self-contained
- * (spec §12).
+ * (spec §12). Vite then copies public/ into dist/ at build time.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,5 +18,6 @@ if (!fs.existsSync(from)) {
 }
 
 fs.rmSync(to, { recursive: true, force: true });
+fs.mkdirSync(path.dirname(to), { recursive: true });
 fs.cpSync(from, to, { recursive: true });
 console.log(`[copy-wasm] ${path.relative(root, to)} <- @mediapipe/tasks-vision`);

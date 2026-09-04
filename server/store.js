@@ -1,137 +1,33 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { config } from './config.js';
-import { openDatabase, faceDir } from './db.js';
 import { newId, newInviteCode, newSessionToken } from './ids.js';
 import { decayedFullness, statusFor } from './game.js';
+import { faceAssetUrl } from './faces.js';
 
 /**
- * Data access for the aquarium. Every read that returns a fish resolves its
- * decayed fullness first, so callers never see a stale value (spec FR-013/§6).
+ * Data access for the aquarium.
+ *
+ * Every method is async and takes a database adapter, so the SQLite driver is
+ * swappable without touching a query. Statements use positional `?` parameters
+ * only, which every SQLite driver understands.
+ *
+ * Reads that return a fish resolve its decayed fullness first, so callers never
+ * see a stale value (spec FR-013, §6).
+ *
+ * @param {{get: Function, all: Function, run: Function}} db
  */
-export function createStore({ file, now = Date.now } = {}) {
-  const db = openDatabase(file);
-
-  const q = {
-    userById: db.prepare('SELECT * FROM users WHERE id = ?'),
-    insertUser: db.prepare(
-      'INSERT INTO users (id, display_name, avatar_url, created_at) VALUES (?, ?, ?, ?)',
-    ),
-    renameUser: db.prepare('UPDATE users SET display_name = ? WHERE id = ?'),
-    deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
-
-    insertSession: db.prepare(
-      'INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)',
-    ),
-    sessionByToken: db.prepare(
-      `SELECT s.token, s.created_at, u.id AS user_id, u.display_name, u.avatar_url
-         FROM sessions s JOIN users u ON u.id = s.user_id
-        WHERE s.token = ?`,
-    ),
-    deleteSessionsForUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
-
-    insertTank: db.prepare(
-      'INSERT INTO tanks (id, name, invite_code, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
-    ),
-    tankById: db.prepare('SELECT * FROM tanks WHERE id = ?'),
-    tankByInvite: db.prepare('SELECT * FROM tanks WHERE invite_code = ?'),
-    firstTank: db.prepare('SELECT * FROM tanks ORDER BY created_at LIMIT 1'),
-
-    upsertMember: db.prepare(
-      `INSERT INTO tank_members (tank_id, user_id, role, joined_at, last_seen_at)
-            VALUES (@tank_id, @user_id, @role, @now, @now)
-       ON CONFLICT (tank_id, user_id) DO UPDATE SET last_seen_at = @now`,
-    ),
-    touchMember: db.prepare(
-      'UPDATE tank_members SET last_seen_at = ? WHERE tank_id = ? AND user_id = ?',
-    ),
-    memberOf: db.prepare(
-      'SELECT * FROM tank_members WHERE tank_id = ? AND user_id = ?',
-    ),
-    membersOfTank: db.prepare(
-      `SELECT m.user_id, m.role, m.joined_at, m.last_seen_at, u.display_name
-         FROM tank_members m JOIN users u ON u.id = m.user_id
-        WHERE m.tank_id = ? ORDER BY m.joined_at`,
-    ),
-
-    insertFish: db.prepare(
-      `INSERT INTO fish (id, tank_id, owner_user_id, face_asset_url, body_variant,
-                         fin_variant, body_color, scale, fullness, fullness_updated_at,
-                         status, created_at)
-       VALUES (@id, @tank_id, @owner_user_id, @face_asset_url, @body_variant,
-               @fin_variant, @body_color, @scale, @fullness, @fullness_updated_at,
-               @status, @created_at)`,
-    ),
-    fishById: db.prepare(
-      `SELECT f.*, u.display_name AS owner_name
-         FROM fish f JOIN users u ON u.id = f.owner_user_id
-        WHERE f.id = ?`,
-    ),
-    fishOfTank: db.prepare(
-      `SELECT f.*, u.display_name AS owner_name
-         FROM fish f JOIN users u ON u.id = f.owner_user_id
-        WHERE f.tank_id = ? ORDER BY f.created_at`,
-    ),
-    fishOfOwner: db.prepare(
-      `SELECT f.*, u.display_name AS owner_name
-         FROM fish f JOIN users u ON u.id = f.owner_user_id
-        WHERE f.tank_id = ? AND f.owner_user_id = ?`,
-    ),
-    updateFullness: db.prepare(
-      'UPDATE fish SET fullness = ?, fullness_updated_at = ?, status = ? WHERE id = ?',
-    ),
-    deleteFish: db.prepare('DELETE FROM fish WHERE id = ?'),
-    deleteFishOfOwner: db.prepare(
-      'DELETE FROM fish WHERE tank_id = ? AND owner_user_id = ?',
-    ),
-
-    insertInteraction: db.prepare(
-      `INSERT INTO interactions (id, tank_id, actor_user_id, target_fish_id, type, result, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ),
-    lastFeedAt: db.prepare(
-      `SELECT created_at FROM interactions
-        WHERE target_fish_id = ? AND actor_user_id = ? AND type = 'feed'
-          AND result IN ('accepted', 'ignored')
-        ORDER BY created_at DESC LIMIT 1`,
-    ),
-
-    insertActivity: db.prepare(
-      `INSERT INTO activity_events (id, tank_id, type, actor_id, target_id, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ),
-    recentActivity: db.prepare(
-      `SELECT * FROM activity_events WHERE tank_id = ?
-        ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-    ),
-    lastActivityOfType: db.prepare(
-      `SELECT created_at FROM activity_events
-        WHERE tank_id = ? AND type = ? AND actor_id = ?
-        ORDER BY created_at DESC LIMIT 1`,
-    ),
-    pruneActivity: db.prepare(
-      'DELETE FROM activity_events WHERE created_at < ?',
-    ),
-
-    insertAnalytics: db.prepare(
-      'INSERT INTO analytics_events (id, name, user_id, props, created_at) VALUES (?, ?, ?, ?, ?)',
-    ),
-  };
+export function createStore(db, { now = Date.now } = {}) {
+  const DEFAULT_TANK_ID = 'tnk_default';
 
   /** Attach decayed fullness + derived status to a raw fish row. */
   function hydrate(row) {
     if (!row) return null;
-    const fullness = decayedFullness(
-      row.fullness,
-      row.fullness_updated_at,
-      now(),
-    );
+    const fullness = decayedFullness(row.fullness, row.fullness_updated_at, now());
     return {
       id: row.id,
       tankId: row.tank_id,
       ownerUserId: row.owner_user_id,
       ownerName: row.owner_name,
-      faceAssetUrl: row.face_asset_url,
+      faceAssetUrl: faceAssetUrl(row.face_asset_id),
       bodyVariant: row.body_variant,
       finVariant: row.fin_variant,
       bodyColor: row.body_color,
@@ -142,36 +38,46 @@ export function createStore({ file, now = Date.now } = {}) {
     };
   }
 
+  const FISH_SELECT = `
+    SELECT f.*, u.display_name AS owner_name
+      FROM fish f JOIN users u ON u.id = f.owner_user_id`;
+
   const store = {
     db,
 
     // ---- users & sessions -------------------------------------------------
 
-    createUser(displayName) {
+    async createUser(displayName) {
       const user = {
         id: newId('usr'),
         display_name: displayName,
         avatar_url: null,
         created_at: now(),
       };
-      q.insertUser.run(
-        user.id,
-        user.display_name,
-        user.avatar_url,
-        user.created_at,
+      await db.run(
+        'INSERT INTO users (id, display_name, avatar_url, created_at) VALUES (?, ?, ?, ?)',
+        [user.id, user.display_name, user.avatar_url, user.created_at],
       );
       return user;
     },
 
-    createSession(userId) {
+    async createSession(userId) {
       const token = newSessionToken();
-      q.insertSession.run(token, userId, now());
+      await db.run(
+        'INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)',
+        [token, userId, now()],
+      );
       return token;
     },
 
-    sessionByToken(token) {
+    async sessionByToken(token) {
       if (!token) return null;
-      const row = q.sessionByToken.get(token);
+      const row = await db.get(
+        `SELECT s.token, u.id AS user_id, u.display_name, u.avatar_url
+           FROM sessions s JOIN users u ON u.id = s.user_id
+          WHERE s.token = ?`,
+        [token],
+      );
       if (!row) return null;
       return {
         token: row.token,
@@ -183,59 +89,73 @@ export function createStore({ file, now = Date.now } = {}) {
       };
     },
 
-    renameUser(userId, displayName) {
-      q.renameUser.run(displayName, userId);
-    },
+    renameUser: (userId, displayName) =>
+      db.run('UPDATE users SET display_name = ? WHERE id = ?', [displayName, userId]),
 
     // ---- tanks ------------------------------------------------------------
 
-    createTank({ name, createdBy = null }) {
+    async createTank({ name, createdBy = null, id = newId('tnk') }) {
       const tank = {
-        id: newId('tnk'),
+        id,
         name,
         invite_code: newInviteCode(),
         created_by: createdBy,
         created_at: now(),
       };
-      q.insertTank.run(
-        tank.id,
-        tank.name,
-        tank.invite_code,
-        tank.created_by,
-        tank.created_at,
+      await db.run(
+        `INSERT INTO tanks (id, name, invite_code, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [tank.id, tank.name, tank.invite_code, tank.created_by, tank.created_at],
       );
       return tank;
     },
 
-    tankById: (id) => q.tankById.get(id) ?? null,
-    tankByInvite: (code) => q.tankByInvite.get(code) ?? null,
+    tankById: (id) => db.get('SELECT * FROM tanks WHERE id = ?', [id]),
+    tankByInvite: (code) => db.get('SELECT * FROM tanks WHERE invite_code = ?', [code]),
 
-    /** The app ships with one shared tank; it is created on first boot. */
-    defaultTank() {
-      return (
-        q.firstTank.get() ??
-        store.createTank({ name: 'the tank' })
+    /**
+     * The app ships with one shared tank, created on first use.
+     *
+     * `INSERT OR IGNORE` on a fixed id makes this safe when several requests
+     * race on a cold database — one wins, the rest read the winner's row.
+     */
+    async defaultTank() {
+      const existing = await store.tankById(DEFAULT_TANK_ID);
+      if (existing) return existing;
+
+      await db.run(
+        `INSERT OR IGNORE INTO tanks (id, name, invite_code, created_by, created_at)
+         VALUES (?, 'the tank', ?, NULL, ?)`,
+        [DEFAULT_TANK_ID, newInviteCode(), now()],
       );
+      return store.tankById(DEFAULT_TANK_ID);
     },
 
-    joinTank(tankId, userId, role = 'member') {
-      q.upsertMember.run({
-        tank_id: tankId,
-        user_id: userId,
-        role,
-        now: now(),
-      });
+    joinTank: (tankId, userId, role = 'member') =>
+      db.run(
+        `INSERT INTO tank_members (tank_id, user_id, role, joined_at, last_seen_at)
+              VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (tank_id, user_id) DO UPDATE SET last_seen_at = ?`,
+        [tankId, userId, role, now(), now(), now()],
+      ),
+
+    async isMember(tankId, userId) {
+      const row = await db.get(
+        'SELECT 1 AS ok FROM tank_members WHERE tank_id = ? AND user_id = ?',
+        [tankId, userId],
+      );
+      return Boolean(row);
     },
 
-    touchMember(tankId, userId) {
-      q.touchMember.run(now(), tankId, userId);
-    },
-
-    isMember: (tankId, userId) => Boolean(q.memberOf.get(tankId, userId)),
-
-    members(tankId) {
+    async members(tankId) {
       const cutoff = now() - config.presence.onlineWindowMs;
-      return q.membersOfTank.all(tankId).map((m) => ({
+      const rows = await db.all(
+        `SELECT m.user_id, m.role, m.joined_at, m.last_seen_at, u.display_name
+           FROM tank_members m JOIN users u ON u.id = m.user_id
+          WHERE m.tank_id = ? ORDER BY m.joined_at`,
+        [tankId],
+      );
+      return rows.map((m) => ({
         userId: m.user_id,
         displayName: m.display_name,
         role: m.role,
@@ -245,85 +165,138 @@ export function createStore({ file, now = Date.now } = {}) {
       }));
     },
 
-    // ---- fish -------------------------------------------------------------
+    // ---- face assets ------------------------------------------------------
 
-    createFish(input) {
-      const row = {
-        id: newId('fsh'),
-        tank_id: input.tankId,
-        owner_user_id: input.ownerUserId,
-        face_asset_url: input.faceAssetUrl,
-        body_variant: input.bodyVariant,
-        fin_variant: input.finVariant,
-        body_color: input.bodyColor,
-        scale: input.scale,
-        fullness: config.fullness.initial,
-        fullness_updated_at: now(),
-        status: statusFor(config.fullness.initial),
-        created_at: now(),
-      };
-      q.insertFish.run(row);
-      return store.fishById(row.id);
-    },
-
-    fishById: (id) => hydrate(q.fishById.get(id)),
-    fishOfTank: (tankId) => q.fishOfTank.all(tankId).map(hydrate),
-    fishOfOwner: (tankId, userId) => hydrate(q.fishOfOwner.get(tankId, userId)),
-
-    setFullness(fishId, fullness) {
-      q.updateFullness.run(fullness, now(), statusFor(fullness), fishId);
-      return store.fishById(fishId);
-    },
-
-    /** Removes the fish row and its face asset from disk (spec FR-020, AC-11). */
-    deleteFish(fishId) {
-      const fish = store.fishById(fishId);
-      if (!fish) return null;
-      q.deleteFish.run(fishId);
-      removeFaceAsset(fish.faceAssetUrl);
-      return fish;
-    },
-
-    deleteFishOfOwner(tankId, userId) {
-      const fish = store.fishOfOwner(tankId, userId);
-      if (!fish) return null;
-      q.deleteFishOfOwner.run(tankId, userId);
-      removeFaceAsset(fish.faceAssetUrl);
-      return fish;
-    },
-
-    /** Full account erasure: fish, face assets, membership, sessions, user row. */
-    deleteUser(userId) {
-      const tanks = db
-        .prepare('SELECT tank_id FROM fish WHERE owner_user_id = ?')
-        .all(userId);
-      for (const { tank_id } of tanks) store.deleteFishOfOwner(tank_id, userId);
-      q.deleteSessionsForUser.run(userId);
-      q.deleteUser.run(userId);
-    },
-
-    // ---- interactions & activity -----------------------------------------
-
-    msSinceLastFeed(fishId, actorUserId) {
-      const row = q.lastFeedAt.get(fishId, actorUserId);
-      return row ? now() - row.created_at : null;
-    },
-
-    recordInteraction({ tankId, actorUserId, targetFishId, type, result }) {
-      const id = newId('int');
-      q.insertInteraction.run(
-        id,
-        tankId,
-        actorUserId,
-        targetFishId,
-        type,
-        result,
-        now(),
+    async createFaceAsset(bytes) {
+      const id = newId('face');
+      await db.run(
+        'INSERT INTO face_assets (id, bytes, created_at) VALUES (?, ?, ?)',
+        [id, bytes, now()],
       );
       return id;
     },
 
-    recordActivity({ tankId, type, actorId = null, targetId = null, payload = {} }) {
+    async faceAsset(id) {
+      const row = await db.get('SELECT bytes FROM face_assets WHERE id = ?', [id]);
+      return row ? toBytes(row.bytes) : null;
+    },
+
+    // ---- fish -------------------------------------------------------------
+
+    async createFish(input) {
+      const row = {
+        id: newId('fsh'),
+        fullness: config.fullness.initial,
+        created_at: now(),
+      };
+      await db.run(
+        `INSERT INTO fish (id, tank_id, owner_user_id, face_asset_id, body_variant,
+                           fin_variant, body_color, scale, fullness,
+                           fullness_updated_at, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          row.id,
+          input.tankId,
+          input.ownerUserId,
+          input.faceAssetId,
+          input.bodyVariant,
+          input.finVariant,
+          input.bodyColor,
+          input.scale,
+          row.fullness,
+          row.created_at,
+          statusFor(row.fullness),
+          row.created_at,
+        ],
+      );
+      return store.fishById(row.id);
+    },
+
+    async fishById(id) {
+      return hydrate(await db.get(`${FISH_SELECT} WHERE f.id = ?`, [id]));
+    },
+
+    async fishOfTank(tankId) {
+      const rows = await db.all(
+        `${FISH_SELECT} WHERE f.tank_id = ? ORDER BY f.created_at`,
+        [tankId],
+      );
+      return rows.map(hydrate);
+    },
+
+    async fishOfOwner(tankId, userId) {
+      return hydrate(
+        await db.get(
+          `${FISH_SELECT} WHERE f.tank_id = ? AND f.owner_user_id = ?`,
+          [tankId, userId],
+        ),
+      );
+    },
+
+    async setFullness(fishId, fullness) {
+      await db.run(
+        'UPDATE fish SET fullness = ?, fullness_updated_at = ?, status = ? WHERE id = ?',
+        [fullness, now(), statusFor(fullness), fishId],
+      );
+      return store.fishById(fishId);
+    },
+
+    /** Removes the fish and the stored face image with it (spec FR-020). */
+    async deleteFish(fishId) {
+      const fish = await store.fishById(fishId);
+      if (!fish) return null;
+      await store.forgetFace(fish.faceAssetUrl);
+      await db.run('DELETE FROM fish WHERE id = ?', [fishId]);
+      return fish;
+    },
+
+    async deleteFishOfOwner(tankId, userId) {
+      const fish = await store.fishOfOwner(tankId, userId);
+      if (!fish) return null;
+      await store.deleteFish(fish.id);
+      return fish;
+    },
+
+    async forgetFace(assetUrl) {
+      const match = /\/faces\/(face_[a-z0-9]+)\.png$/.exec(assetUrl ?? '');
+      if (match) await db.run('DELETE FROM face_assets WHERE id = ?', [match[1]]);
+    },
+
+    /** Full account erasure: fish, face images, membership, sessions, user row. */
+    async deleteUser(userId) {
+      const rows = await db.all(
+        'SELECT tank_id FROM fish WHERE owner_user_id = ?',
+        [userId],
+      );
+      for (const row of rows) await store.deleteFishOfOwner(row.tank_id, userId);
+      await db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
+      await db.run('DELETE FROM tank_members WHERE user_id = ?', [userId]);
+      await db.run('DELETE FROM users WHERE id = ?', [userId]);
+      return rows.map((row) => row.tank_id);
+    },
+
+    // ---- interactions & activity -----------------------------------------
+
+    async msSinceLastFeed(fishId, actorUserId) {
+      const row = await db.get(
+        `SELECT created_at FROM interactions
+          WHERE target_fish_id = ? AND actor_user_id = ? AND type LIKE 'feed%'
+            AND result IN ('accepted', 'ignored')
+          ORDER BY created_at DESC LIMIT 1`,
+        [fishId, actorUserId],
+      );
+      return row ? now() - row.created_at : null;
+    },
+
+    recordInteraction: ({ tankId, actorUserId, targetFishId, type, result }) =>
+      db.run(
+        `INSERT INTO interactions
+           (id, tank_id, actor_user_id, target_fish_id, type, result, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [newId('int'), tankId, actorUserId, targetFishId, type, result, now()],
+      ),
+
+    async recordActivity({ tankId, type, actorId = null, targetId = null, payload = {} }) {
       const event = {
         id: newId('act'),
         tank_id: tankId,
@@ -333,45 +306,53 @@ export function createStore({ file, now = Date.now } = {}) {
         payload: JSON.stringify(payload),
         created_at: now(),
       };
-      q.insertActivity.run(
-        event.id,
-        event.tank_id,
-        event.type,
-        event.actor_id,
-        event.target_id,
-        event.payload,
-        event.created_at,
+      await db.run(
+        `INSERT INTO activity_events
+           (id, tank_id, type, actor_id, target_id, payload, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          event.id,
+          event.tank_id,
+          event.type,
+          event.actor_id,
+          event.target_id,
+          event.payload,
+          event.created_at,
+        ],
       );
       return toActivity(event);
     },
 
-    activity(tankId, limit = config.activity.limit) {
+    async activity(tankId, limit = config.activity.limit) {
+      const rows = await db.all(
+        `SELECT * FROM activity_events WHERE tank_id = ?
+          ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+        [tankId, limit],
+      );
       // Newest-first from SQL, flipped so the caller gets chronological order.
-      return q.recentActivity.all(tankId, limit).map(toActivity).reverse();
+      return rows.map(toActivity).reverse();
     },
 
-    msSinceActivity(tankId, type, actorId) {
-      const row = q.lastActivityOfType.get(tankId, type, actorId);
+    async msSinceActivity(tankId, type, actorId) {
+      const row = await db.get(
+        `SELECT created_at FROM activity_events
+          WHERE tank_id = ? AND type = ? AND actor_id = ?
+          ORDER BY created_at DESC LIMIT 1`,
+        [tankId, type, actorId],
+      );
       return row ? now() - row.created_at : null;
     },
 
-    pruneActivity() {
-      return q.pruneActivity.run(now() - config.activity.retentionMs).changes;
-    },
+    pruneActivity: () =>
+      db.run('DELETE FROM activity_events WHERE created_at < ?', [
+        now() - config.activity.retentionMs,
+      ]),
 
-    recordAnalytics({ name, userId = null, props = {} }) {
-      q.insertAnalytics.run(
-        newId('anl'),
-        name,
-        userId,
-        JSON.stringify(props),
-        now(),
-      );
-    },
-
-    close() {
-      db.close();
-    },
+    recordAnalytics: ({ name, userId = null, props = {} }) =>
+      db.run(
+        'INSERT INTO analytics_events (id, name, user_id, props, created_at) VALUES (?, ?, ?, ?, ?)',
+        [newId('anl'), name, userId, JSON.stringify(props), now()],
+      ),
   };
 
   return store;
@@ -389,8 +370,8 @@ function toActivity(row) {
   };
 }
 
-function removeFaceAsset(assetUrl) {
-  const name = path.basename(assetUrl ?? '');
-  if (!name || !/^[\w.-]+\.png$/.test(name)) return;
-  fs.rmSync(path.join(faceDir, name), { force: true });
+/** better-sqlite3 hands back a Buffer; other drivers an ArrayBuffer. */
+function toBytes(value) {
+  if (value instanceof Uint8Array) return value;
+  return new Uint8Array(value);
 }

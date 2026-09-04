@@ -1,19 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
-
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-export const dataDir = process.env.FFA_DATA_DIR
-  ? path.resolve(process.env.FFA_DATA_DIR)
-  : path.join(rootDir, 'data');
-
-export const faceDir = path.join(dataDir, 'faces');
-
-const SCHEMA = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+-- Schema for the friend fish aquarium (spec §7).
+--
+-- Applied by the server on boot (see server/sqlite.js). Every statement is
+-- idempotent, so starting the app is the whole migration step. Keep PRAGMAs out
+-- of here: they are connection settings, not schema, and live in sqlite.js.
 
 CREATE TABLE IF NOT EXISTS users (
   id           TEXT PRIMARY KEY,
@@ -45,19 +34,28 @@ CREATE TABLE IF NOT EXISTS tank_members (
   PRIMARY KEY (tank_id, user_id)
 );
 
+-- The derived face cutout, stored as bytes rather than on disk, so deleting a
+-- fish deletes its image in the same transaction and one database backup
+-- captures the whole tank (spec FR-020).
+CREATE TABLE IF NOT EXISTS face_assets (
+  id         TEXT PRIMARY KEY,
+  bytes      BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS fish (
-  id                   TEXT PRIMARY KEY,
-  tank_id              TEXT NOT NULL REFERENCES tanks(id) ON DELETE CASCADE,
-  owner_user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  face_asset_url       TEXT NOT NULL,
-  body_variant         TEXT NOT NULL,
-  fin_variant          TEXT NOT NULL,
-  body_color           TEXT NOT NULL,
-  scale                REAL NOT NULL,
-  fullness             REAL NOT NULL,
-  fullness_updated_at  INTEGER NOT NULL,
-  status               TEXT NOT NULL,
-  created_at           INTEGER NOT NULL
+  id                  TEXT PRIMARY KEY,
+  tank_id             TEXT NOT NULL REFERENCES tanks(id) ON DELETE CASCADE,
+  owner_user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  face_asset_id       TEXT NOT NULL,
+  body_variant        TEXT NOT NULL,
+  fin_variant         TEXT NOT NULL,
+  body_color          TEXT NOT NULL,
+  scale               REAL NOT NULL,
+  fullness            REAL NOT NULL,
+  fullness_updated_at INTEGER NOT NULL,
+  status              TEXT NOT NULL,
+  created_at          INTEGER NOT NULL
 );
 
 -- One fish per user per tank (spec §10 "Duplicate fish"); re-creating replaces.
@@ -97,12 +95,3 @@ CREATE TABLE IF NOT EXISTS analytics_events (
   props      TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL
 );
-`;
-
-export function openDatabase(file = path.join(dataDir, 'aquarium.db')) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.mkdirSync(faceDir, { recursive: true });
-  const db = new Database(file);
-  db.exec(SCHEMA);
-  return db;
-}

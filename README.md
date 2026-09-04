@@ -17,10 +17,72 @@ npm run dev      # API on :8787, client on :5173
 open http://localhost:5173
 ```
 
-For a production build: `npm run build && npm start` (the server then serves
-`dist/` itself on `:8787`).
-
 `npm test` runs the game-rule unit tests and the API integration tests.
+
+---
+
+## Deploying it
+
+**HTTPS is not optional.** Browsers refuse `getUserMedia` on an insecure
+origin, so on plain http nobody can add a fish — the tank renders and feeding
+works, but the camera flow dies at the first step. `localhost` is exempt, which
+is why development works without a certificate. Plan on a domain name.
+
+### Docker (recommended)
+
+`compose.yaml` runs the app behind [Caddy](https://caddyserver.com), which
+obtains and renews a Let's Encrypt certificate on its own.
+
+```sh
+export FFA_DOMAIN=tank.example.com     # must already point at this host
+export FFA_EMAIL=you@example.com       # for certificate expiry notices
+docker compose up -d --build
+
+# put the demo fish in, if you want them
+docker compose exec app node scripts/seed.js
+```
+
+Ports 80 and 443 must be reachable from the internet for the certificate
+challenge to succeed.
+
+### Without Docker
+
+```sh
+npm ci
+npm run build
+FFA_DATA_DIR=/var/lib/friend-fish-aquarium FFA_TRUST_PROXY=1 npm start
+```
+
+`deploy/friend-fish-aquarium.service` is a systemd unit for this. Put a
+TLS-terminating reverse proxy in front of it either way; `deploy/Caddyfile` is
+a working example, and the one setting that matters for any proxy is that
+**`/api/tanks/*/events` must not be buffered** — it is a Server-Sent Events
+stream, and a proxy that buffers it will make the activity feed appear frozen
+until the connection drops. In nginx that means `proxy_buffering off;` on that
+location.
+
+### Configuration
+
+| Variable | Default | |
+| --- | --- | --- |
+| `PORT` | `8787` | |
+| `FFA_DATA_DIR` | `./data` | Holds `aquarium.db`. The only thing to back up. |
+| `FFA_TRUST_PROXY` | unset | Set to `1` **only** when a reverse proxy you control is definitely in front. It makes the app believe `X-Forwarded-Proto`, which anyone can send — without a proxy to overwrite it, that would let a client talk the app out of marking the session cookie `Secure`. |
+
+Game rules (fullness decay, feed amount, cooldowns, the ignore chance) all live
+in `server/config.js` and are meant to be tuned.
+
+### Backups
+
+The database holds everything, including the stored face images, so one file is
+the whole backup:
+
+```sh
+./deploy/backup.sh /path/to/backups          # keeps the last 14
+```
+
+It uses SQLite's `.backup`, which is safe to run against a live server — a
+plain `cp` of a WAL-mode database is not.
 
 ---
 
@@ -32,16 +94,18 @@ For a production build: `npm run build && npm start` (the server then serves
 | S2-S4 Add your fish → camera → face mesh → preview | `client/src/creator/` |
 | S5 Activity feed pills | `client/src/ui/activity-feed.js` |
 | §6 Fullness / feed / ignore rules | `server/game.js`, `server/config.js` |
-| §7 Data model | `server/db.js` |
-| §8 API + realtime | `server/api.js`, `server/realtime.js` |
+| §7 Data model | `migrations/0001_init.sql` |
+| §8 API + realtime | `server/router.js`, `server/sse.js` |
 | §9 Face → fish pipeline | `client/src/creator/face-detector.js`, `face-cutout.js` |
 | §11 Analytics events | `client/src/analytics.js` |
 | §12 Privacy & performance | see below |
 
 ### Stack
 
-- **Server** — Node + Express, SQLite (`better-sqlite3`), Server-Sent Events for
-  realtime. No build step, no external services.
+- **Server** — Node, no framework. `server/router.js` is the whole API, written
+  against Web `Request`/`Response`; `server/node.js` is the ~60 lines of
+  `node:http` plumbing plus static file serving. SQLite via `better-sqlite3`,
+  Server-Sent Events for realtime.
 - **Client** — Vite, three.js for the tank, MediaPipe Face Landmarker for face
   detection. Plain DOM for the UI; the only "framework" is a ~130-line pub/sub
   store in `client/src/state.js`.
@@ -49,13 +113,17 @@ For a production build: `npm run build && npm start` (the server then serves
   the client and server can never disagree about what a fish can look like or
   what a log line says.
 
+The schema in `migrations/` is applied on boot and every statement is
+idempotent, so deploying is "start the new version" — there is no migration
+step to forget.
+
 ---
 
 ## Product decisions
 
 The spec flags a lot of things as `[추정]` (inferred) or `[확인 필요]` (needs a
 decision). Here is what this implementation decided, and why. Everything
-numeric lives in `server/config.js` and is meant to be tuned.
+numeric lives in `server/config.js`.
 
 **One tank, joined by link (§15).** The Reel only ever shows a single shared
 tank, so that is what this builds: the server creates one on first boot, and
@@ -110,18 +178,22 @@ Capture button is always there too.
 The camera pipeline runs entirely in the browser:
 
 - The MediaPipe wasm runtime and the `face_landmarker.task` model are served
-  from this app's own origin (`public/`), not a CDN. No third party sees that
-  you opened the camera.
+  from this app's own origin, not a CDN. No third party sees that you opened
+  the camera.
 - Raw video **never leaves the device**. What is uploaded is a single derived
   PNG: the frame cropped to the detected face oval, masked, and downscaled to
-  512px. The server re-validates the PNG magic bytes and size before storing it.
+  384px. The server re-validates the PNG magic bytes and size before storing it.
 - The camera stream is stopped the moment it is no longer needed — after a
   capture, on cancel, and on every error path.
 - Consent is explicit: the creator will not open the camera until you tick the
   box explaining what is stored.
-- **Delete my fish** removes the row and the PNG from disk. **Delete my fish and
+- **Delete my fish** removes the row and the stored image. **Delete my fish and
   data** additionally erases the account, its sessions and its memberships.
   Both are in the menu behind your name.
+
+Face images are rows in the database rather than files on disk, so deleting a
+fish deletes its image in the same transaction — there is no orphaned-file path
+to get wrong, and no CDN cache to purge.
 
 ## Accessibility & performance (§12)
 
@@ -130,18 +202,10 @@ The camera pipeline runs entirely in the browser:
   is a shortcut, not the only way in.
 - Modals trap focus and close on Escape. `prefers-reduced-motion` disables the
   UI animation.
-- The renderer caps device pixel ratio at 2, widens the field of view on tall
-  phones, and shares geometry across every fish. Textures are generated on a
-  canvas at boot, so the first frame waits on no network request.
-
-## Data model
-
-`users`, `tanks`, `tank_members`, `fish`, `interactions`, `activity_events` —
-as in spec §7, plus `sessions` for the cookie auth and `analytics_events` for
-§11. Schema is in `server/db.js`; it is created on first boot.
-
-Everything lives under `data/` (override with `FFA_DATA_DIR`): `aquarium.db`
-and `faces/`.
+- The renderer caps device pixel ratio at 2, fits the fish's swimmable box to
+  the visible frustum so a phone in portrait still sees the whole cast, and
+  shares geometry across every fish. Textures are generated on a canvas at boot,
+  so the first frame waits on no network request.
 
 ## API
 
@@ -153,12 +217,19 @@ and `faces/`.
 | `POST` | `/api/tanks/:id/fish` | register a fish (replaces yours if you have one) |
 | `POST` | `/api/tanks/:id/presence` | heartbeat; produces "{user} is here" |
 | `POST` | `/api/fish/:id/feed` | returns `accepted` \| `full` \| `ignored` \| `cooldown` |
-| `DELETE` | `/api/fish/:id` | remove your fish and its face asset |
+| `DELETE` | `/api/fish/:id` | remove your fish and its stored image |
 | `POST` | `/api/session` | sign in with a display name |
 | `DELETE` | `/api/me` | erase account, fish and stored faces |
+| `GET` | `/api/health` | liveness probe |
+| `GET` | `/faces/:id.png` | a stored face cutout |
 
 The feed result is decided entirely on the server. A client cannot talk its way
 past the full guard, the cooldown or the ignore roll.
+
+If the event stream cannot be held open — a proxy that buffers
+`text/event-stream`, say — the client notices after three failures and falls
+back to polling the tank every 5s, which spec §8 explicitly allows for a small
+group. Fixing the proxy is better, but the tank never simply stops updating.
 
 ## Known gaps
 
@@ -167,3 +238,6 @@ past the full guard, the cooldown or the ignore roll.
   spec S4 lists it as unobserved.
 - One tank per deployment in the UI. The schema supports more.
 - Analytics are written to SQLite, not forwarded anywhere.
+- `Dockerfile` and `compose.yaml` are written but were not built here (no Docker
+  daemon in the authoring environment). The runtime file set they produce was
+  verified by running the server from exactly those paths.

@@ -67,8 +67,16 @@ export const config = {
     maxAgeMs: 365 * 24 * 60 * 60 * 1000,
   },
 
-  /** Cap on the stored face cutout (a derived PNG, never raw video — spec §12). */
+  /**
+   * The stored face cutout: a derived PNG, never raw video (spec §12).
+   *
+   * The image is a row in the database rather than a file on disk, so deleting
+   * a fish deletes its face in the same transaction and a single `.backup` of
+   * the database captures the whole tank.
+   */
   faceAsset: {
-    maxBytes: 2 * 1024 * 1024,
+    maxBytes: 700 * 1024,
+    /** Edge length the client downscales the cutout to before uploading. */
+    cutoutSize: 384,
   },
 };

@@ -1,0 +1,24 @@
+# Caddy terminates TLS and forwards to the app. Certificates are issued and
+# renewed automatically, which is the whole reason to use it here — the camera
+# flow needs a real https origin.
+
+{
+	email {$FFA_EMAIL}
+}
+
+{$FFA_DOMAIN} {
+	encode zstd gzip
+
+	# Server-Sent Events must not be buffered or the activity feed only updates
+	# when the connection closes.
+	@events path /api/tanks/*/events
+	reverse_proxy @events app:8787 {
+		flush_interval -1
+	}
+
+	reverse_proxy app:8787
+
+	log {
+		output stdout
+	}
+}

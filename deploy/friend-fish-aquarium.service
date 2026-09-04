@@ -1,0 +1,37 @@
+# systemd unit for running the app directly on a host, without Docker.
+#
+#   sudo cp deploy/friend-fish-aquarium.service /etc/systemd/system/
+#   sudo systemctl enable --now friend-fish-aquarium
+#
+# Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik) in front of it:
+# the camera flow requires an https origin.
+
+[Unit]
+Description=friend fish aquarium
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aquarium
+WorkingDirectory=/srv/friend-fish-aquarium
+ExecStart=/usr/bin/node server/node.js
+Restart=always
+RestartSec=3
+
+Environment=NODE_ENV=production
+Environment=PORT=8787
+Environment=FFA_DATA_DIR=/var/lib/friend-fish-aquarium
+# Only set this when a reverse proxy you control is definitely in front.
+Environment=FFA_TRUST_PROXY=1
+
+# The database directory is the only thing the app needs to write to.
+StateDirectory=friend-fish-aquarium
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/friend-fish-aquarium
+
+[Install]
+WantedBy=multi-user.target

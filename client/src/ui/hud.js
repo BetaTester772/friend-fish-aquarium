@@ -127,9 +127,9 @@ export function createHud({
     const { viewer, fish, members, tank, connection } = state.get();
 
     subtitle.textContent =
-      connection === 'live'
-        ? `${fish.length} fish · ${members.filter((m) => m.online).length} here now`
-        : 'reconnecting…';
+      connection === 'reconnecting'
+        ? 'reconnecting…'
+        : `${fish.length} fish · ${members.filter((m) => m.online).length} here now`;
     title.textContent = tank?.name ?? 'friend fish aquarium';
 
     if (viewer) {

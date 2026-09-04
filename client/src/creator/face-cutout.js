@@ -6,9 +6,10 @@ import { boundsOf, faceOvalIndices } from './face-detector.js';
  *
  * The cutout is masked to the detected face oval with a soft edge, cropped
  * square, and downscaled — so what we upload is a small derived image, never
- * the camera frame itself.
+ * the camera frame itself. The size is deliberately modest — the PNG is stored
+ * as a row in the database, not as a file.
  */
-export function cutOutFace(video, landmarks, { size = 512, padding = 0.18 } = {}) {
+export function cutOutFace(video, landmarks, { size = 384, padding = 0.18 } = {}) {
   const frameWidth = video.videoWidth;
   const frameHeight = video.videoHeight;
   if (!frameWidth || !frameHeight) {

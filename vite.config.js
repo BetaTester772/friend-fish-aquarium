@@ -2,8 +2,12 @@ import { defineConfig } from 'vite';
 
 const API_TARGET = process.env.FFA_API_TARGET ?? 'http://localhost:8787';
 
-/** Paths the API server owns; Vite proxies them through in development. */
-const proxied = ['/api', '/assets', '/models', '/mediapipe-wasm'];
+/**
+ * Paths the API owns; Vite proxies them through in development. The MediaPipe
+ * model and wasm live in `public/`, which Vite serves itself, so they are not
+ * proxied.
+ */
+const proxied = ['/api', '/faces'];
 
 export default defineConfig({
   root: 'client',

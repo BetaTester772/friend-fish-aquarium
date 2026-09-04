@@ -6,11 +6,11 @@
   "description": "Shared 3D aquarium where friends add themselves as face-fish and feed each other like tamagotchis.",
   "scripts": {
     "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "node --watch server/index.js",
+    "dev:server": "node --watch server/node.js",
     "dev:client": "vite",
-    "build": "vite build",
     "prebuild": "node scripts/copy-wasm.js",
-    "start": "cross-env NODE_ENV=production node server/index.js",
+    "build": "vite build",
+    "start": "node server/node.js",
     "seed": "node scripts/seed.js",
     "test": "node --test \"tests/**/*.test.js\"",
     "postinstall": "node scripts/copy-wasm.js"
@@ -18,12 +18,10 @@
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.18",
     "better-sqlite3": "^11.5.0",
-    "express": "^4.21.1",
     "three": "^0.170.0"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
     "vite": "^5.4.11"
   }
 }
