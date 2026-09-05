@@ -57,8 +57,13 @@ export function createFishLabels({ container, aquarium, state }) {
       entry.root.dataset.mine = String(mine);
       entry.root.setAttribute(
         'aria-label',
-        `${fish.ownerName}${mine ? ' (you)' : ''} — ${fish.status}, ` +
-          `${Math.round(fish.fullness)} out of ${max} full. Open actions.`,
+        t('fish.aria', {
+          name: fish.ownerName,
+          mine: mine ? t('fish.mineSuffix') : '',
+          status: translateStatus(fish.status),
+          fullness: Math.round(fish.fullness),
+          max,
+        }),
       );
     }
 
@@ -92,14 +97,17 @@ export function createFishLabels({ container, aquarium, state }) {
 
   render(state.get().fish);
   const stopRender = state.on('fish', render);
+  const stopLocale = subscribeLocale(() => render(state.get().fish));
   const stopFrame = aquarium.onFrame(reposition);
 
   return {
     destroy() {
       stopRender();
+      stopLocale();
       stopFrame();
       for (const entry of labels.values()) entry.root.remove();
       labels.clear();
     },
   };
 }
+import { subscribeLocale, t, translateStatus } from '../i18n.js';

@@ -148,6 +148,39 @@ button {
   pointer-events: none;
 }
 
+.language-selector {
+  position: fixed;
+  top: var(--safe-top);
+  right: var(--safe-right);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 4px 7px 4px 11px;
+  border-radius: var(--radius);
+  background: rgba(253, 253, 251, 0.92);
+  box-shadow: var(--shadow);
+}
+
+.language-selector__label {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.language-selector__select {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .hud > * {
   pointer-events: auto;
 }
@@ -176,6 +209,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: 48px;
 }
 
 /* "clare" chip, top right of the Reel. */
@@ -532,9 +566,22 @@ button {
   animation: fade-in 0.16s ease;
 }
 
+.modal-shell {
+  display: grid;
+  place-items: center;
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 32px);
+}
+
+.modal-shell > .language-selector {
+  position: static;
+  justify-self: end;
+  margin-bottom: 8px;
+}
+
 .modal {
   width: min(420px, 100%);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(100dvh - 84px);
   overflow: auto;
   padding: 20px;
   border-radius: 22px;
@@ -705,6 +752,13 @@ button {
 
   .hud__brand {
     padding: 6px 12px;
+    max-width: calc(100vw - 150px);
+  }
+
+  .hud__title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .hud__subtitle {

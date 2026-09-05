@@ -27,6 +27,13 @@ import {
 } from './in-app-browser.js';
 import { cutOutFace } from './face-cutout.js';
 import { createFishPreview } from './preview-scene.js';
+import { bindText, t } from '../i18n.js';
+
+const localized = (tag, className, key, variables) => {
+  const node = el(tag, className);
+  bindText(node, key, variables);
+  return node;
+};
 
 /** Two decimals is plenty for a framing measurement. */
 const round = (value) => Math.round(value * 100) / 100;
@@ -84,7 +91,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
 
       // ------------------------------------------------------- stage: consent
 
-      function renderConsent(error) {
+      function renderConsent(errorKey) {
         dialog.replaceChildren();
 
         const consented = el('input');
@@ -95,16 +102,10 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         label.htmlFor = 'ffa-consent';
         label.append(
           consented,
-          el(
-            'span',
-            null,
-            'I understand my camera runs in this browser only. The tank stores ' +
-              'one cropped picture of my face so friends can recognise my fish, ' +
-              'and I can delete it at any time.',
-          ),
+          localized('span', null, 'creator.consent'),
         );
 
-        const start = el('button', 'btn btn--primary', 'Turn on camera');
+        const start = localized('button', 'btn btn--primary', 'creator.turnOnCamera');
         start.type = 'button';
         start.disabled = true;
         consented.addEventListener('change', () => {
@@ -112,7 +113,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         });
         start.addEventListener('click', () => startCamera());
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
@@ -120,14 +121,9 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         actions.append(cancelBtn, start);
 
         dialog.append(
-          el('h2', 'modal__title', 'Add your fish'),
-          el(
-            'p',
-            'modal__body',
-            'Point the camera at your face. We find it, cut it out, and stick it ' +
-              'on a fish. Nothing is recorded — only the still cut-out is saved.',
-          ),
-          ...(error ? [el('p', 'modal__error', error)] : []),
+          localized('h2', 'modal__title', 'creator.title'),
+          localized('p', 'modal__body', 'creator.intro'),
+          ...(errorKey ? [localized('p', 'modal__error', errorKey)] : []),
           label,
           actions,
         );
@@ -141,12 +137,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
       function escapeHatch(appName) {
         const box = el('p', 'modal__error');
         box.append(
-          el(
-            'span',
-            null,
-            `You are in ${appName}'s built-in browser. Some of them do not pass ` +
-              'the camera through — opening this page in Chrome is worth a try.',
-          ),
+          localized('span', null, 'creator.inAppBrowser', { appName }),
         );
 
         // Carries the share token, so the visitor lands inside the tank rather
@@ -158,20 +149,26 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         row.style.marginTop = '8px';
 
         if (canJumpToRealBrowser()) {
-          const jump = el('a', 'btn btn--primary btn--small', 'Open in Chrome');
+          const jump = localized('a', 'btn btn--primary btn--small', 'creator.openChrome');
           jump.href = androidChromeUrl(target);
           jump.addEventListener('click', () => track('in_app_browser_escape', { app: appName }));
           row.append(jump);
         }
 
-        const copy = el('button', 'btn btn--ghost btn--small', 'Copy the link');
+        let copied = false;
+        const copy = localized(
+          'button',
+          'btn btn--ghost btn--small',
+          () => copied ? 'creator.copiedChrome' : 'creator.copyLink',
+        );
         copy.type = 'button';
         copy.addEventListener('click', async () => {
           try {
             await navigator.clipboard.writeText(target);
-            copy.textContent = 'Copied — paste it in Chrome';
+            copied = true;
+            copy.textContent = t('creator.copiedChrome');
           } catch {
-            window.prompt('Copy this link into Chrome', target);
+            window.prompt(t('creator.copyChromePrompt'), target);
           }
         });
         row.append(copy);
@@ -188,13 +185,11 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             result: 'unsupported',
             browser: navigator.userAgent,
           });
-          renderConsent(
-            'This browser will not give us a camera. Try Safari or Chrome on a device with a front camera.',
-          );
+          renderConsent('creator.unsupportedCamera');
           return;
         }
 
-        renderCameraShell('Starting camera…');
+        renderCameraShell('creator.startingCamera');
 
         try {
           state.stream = await navigator.mediaDevices.getUserMedia({
@@ -247,10 +242,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             message: String(err?.message ?? err).slice(0, 200),
           });
           stopCamera();
-          renderConsent(
-            'The face detector would not start on this device. ' +
-              'Try a different browser, or ask for a hand.',
-          );
+          renderConsent('creator.detectorFailed');
           return;
         }
 
@@ -263,7 +255,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
        * time inside a real gesture, generally fixes it.
        */
       function renderTapToStart() {
-        const start = el('button', 'btn btn--primary', 'Tap to start the camera');
+        const start = localized('button', 'btn btn--primary', 'creator.tapStart');
         start.type = 'button';
         start.addEventListener('click', async () => {
           try {
@@ -275,23 +267,32 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             state.landmarker = await loadFaceLandmarker();
           } catch {
             stopCamera();
-            renderConsent('The face detector would not start on this device.');
+            renderConsent('creator.detectorFailedShort');
             return;
           }
-          state.hint.textContent = 'Center your face in the frame.';
+          setCameraHint('creator.centerFace');
           runDetectionLoop();
         });
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
         const actions = state.video.closest('.modal').querySelector('.modal__actions');
         actions.replaceChildren(cancelBtn, start);
-        state.hint.textContent = 'Your browser paused the camera.';
+        setCameraHint('creator.browserPaused');
       }
 
-      function renderCameraShell(hintText) {
+      function setCameraHint(key, variables = {}, tone) {
+        state.hintKey = key;
+        state.hintVariables = variables;
+        if (!state.hint) return;
+        state.hint.textContent = t(key, variables);
+        if (tone) state.hint.dataset.tone = tone;
+        else delete state.hint.dataset.tone;
+      }
+
+      function renderCameraShell(hintKey) {
         dialog.replaceChildren();
 
         const stage = el('div', 'creator__stage');
@@ -307,16 +308,23 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         const overlay = document.createElement('canvas');
         overlay.className = 'creator__overlay';
 
-        const hint = el('div', 'creator__hint', hintText);
+        state.hintKey = hintKey;
+        state.hintVariables = {};
+        const hint = localized(
+          'div',
+          'creator__hint',
+          () => state.hintKey,
+          () => state.hintVariables,
+        );
         stage.append(video, overlay, hint);
         if (debug) stage.append(debug);
 
-        const capture = el('button', 'btn btn--primary', 'Capture');
+        const capture = localized('button', 'btn btn--primary', 'creator.capture');
         capture.type = 'button';
         capture.disabled = true;
         capture.addEventListener('click', () => takeShot());
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
@@ -324,7 +332,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         actions.append(cancelBtn, capture);
 
         dialog.append(
-          el('h2', 'modal__title', 'Line up your face'),
+          localized('h2', 'modal__title', 'creator.lineUp'),
           stage,
           actions,
         );
@@ -341,11 +349,11 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         stopCamera();
         dialog.replaceChildren();
 
-        const retry = el('button', 'btn btn--primary', 'Try again');
+        const retry = localized('button', 'btn btn--primary', 'common.tryAgain');
         retry.type = 'button';
         retry.addEventListener('click', () => startCamera());
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
@@ -357,46 +365,26 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         const reason = err?.name;
         const trapped = inAppBrowser();
 
-        const advice = [];
+        const adviceKeys = [];
         if (reason === 'NotFoundError' || reason === 'OverconstrainedError') {
-          advice.push('This device has no camera the browser can see.');
+          adviceKeys.push('creator.noCamera');
           if (isDesktop()) {
-            advice.push('If you have a webcam plugged in, check it is connected.');
+            adviceKeys.push('creator.checkWebcam');
           }
         } else if (reason === 'NotReadableError' || reason === 'TrackStartError') {
-          advice.push(
-            'Another app is holding the camera. Close Zoom, Teams, Meet or ' +
-              'whatever else might have it open, then try again.',
-          );
+          adviceKeys.push('creator.cameraBusy');
         } else if (isDesktop()) {
           // The Windows case we actually saw: ten straight denials from one
           // desktop Chrome. Both causes look identical to the page.
-          advice.push(
-            'Chrome is refusing the camera for this site. Click the camera or ' +
-              'lock icon at the left of the address bar and set Camera to Allow, ' +
-              'then reload.',
-          );
-          advice.push(
-            'If that is already allowed, Windows itself may be blocking it: ' +
-              'Settings → Privacy & security → Camera, and turn on both ' +
-              '"Camera access" and "Let desktop apps access your camera".',
-          );
+          adviceKeys.push('creator.desktopPermission', 'creator.windowsPermission');
         } else {
-          advice.push(
-            'Your browser is refusing the camera for this site. Allow it in ' +
-              'the site settings, then try again.',
-          );
+          adviceKeys.push('creator.sitePermission');
         }
 
         dialog.append(
-          el('h2', 'modal__title', 'We could not open the camera'),
-          ...advice.map((line) => el('p', 'modal__body', line)),
-          el(
-            'p',
-            'modal__body',
-            'The video stays on your device either way — only the cropped face ' +
-              'is ever saved.',
-          ),
+          localized('h2', 'modal__title', 'creator.permissionTitle'),
+          ...adviceKeys.map((key) => localized('p', 'modal__body', key)),
+          localized('p', 'modal__body', 'creator.privacyReminder'),
           // Offered, not asserted: some of these browsers work fine.
           ...(trapped ? [escapeHatch(trapped)] : []),
           actions,
@@ -456,7 +444,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             from: 'GPU',
             box: `${round(box.minX)},${round(box.minY)} .. ${round(box.maxX)},${round(box.maxY)}`,
           });
-          setHint('Adjusting for this phone…');
+          setCameraHint('creator.adjusting');
           useCpuDelegate(state.landmarker)
             .then((cpu) => {
               if (state.stage === 'camera') state.landmarker = cpu;
@@ -501,7 +489,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             if (!stalled && performance.now() - loopStarted > 6000) {
               stalled = true;
               track('camera_stalled', { browser: navigator.userAgent });
-              setHint('The camera is not sending a picture. Try reopening this.');
+              setCameraHint('creator.cameraStalled');
             }
             return;
           }
@@ -574,7 +562,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           if (!landmarks) {
             hold.bad(timestamp);
             captureBtn.disabled = true; // nothing to capture
-            setHint('Center your face in the frame.');
+            setCameraHint('creator.centerFace');
             // The no-face case is the one worth reading off the screen: it says
             // whether the camera is even producing frames.
             showDebug(['no face', `frames ${attempts}`]);
@@ -619,7 +607,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             // no way to take the photo themselves. If there is a face, they can
             // always shoot it.
             captureBtn.disabled = false;
-            setHint(problem);
+            setCameraHint(`creator.framing.${problem}`);
             reportFraming(problem, landmarks);
             return;
           }
@@ -630,13 +618,15 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           hold.good(timestamp);
 
           if (hold.isComplete(timestamp)) {
-            setHint('Got it!', 'ready');
+            setCameraHint('creator.gotIt', {}, 'ready');
             takeShot(); // never on an empty frame (spec S3 / §10)
             return;
           }
           // Show the countdown, so a hold that is not completing looks like
           // something the user can influence rather than a dead screen.
-          setHint(`Hold still… ${Math.ceil(hold.remaining(timestamp) / 300)}`);
+          setCameraHint('creator.holdStill', {
+            count: Math.ceil(hold.remaining(timestamp) / 300),
+          });
         };
 
         /**
@@ -651,12 +641,6 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
             `delegate ${activeDelegate ?? '?'}  odd ${impossibleFrames}`,
             ...lines,
           ].join('\n');
-        }
-
-        function setHint(text, tone) {
-          hint.textContent = text;
-          if (tone) hint.dataset.tone = tone;
-          else delete hint.dataset.tone;
         }
 
         state.rafId = requestAnimationFrame(tick);
@@ -697,11 +681,11 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
       function renderGenerationFailed() {
         dialog.replaceChildren();
 
-        const retry = el('button', 'btn btn--primary', 'Try again');
+        const retry = localized('button', 'btn btn--primary', 'common.tryAgain');
         retry.type = 'button';
         retry.addEventListener('click', () => startCamera());
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
@@ -709,20 +693,15 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         actions.append(cancelBtn, retry);
 
         dialog.append(
-          el('h2', 'modal__title', 'That one did not work'),
-          el(
-            'p',
-            'modal__body',
-            'We could not cut your face out of that frame. Nothing was saved — ' +
-              'give it another go.',
-          ),
+          localized('h2', 'modal__title', 'creator.generationTitle'),
+          localized('p', 'modal__body', 'creator.generationBody'),
           actions,
         );
       }
 
       // ------------------------------------------------------- stage: preview
 
-      function renderPreview(error) {
+      function renderPreview(errorKey) {
         state.preview?.dispose();
         dialog.replaceChildren();
 
@@ -731,14 +710,14 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         canvas.className = 'creator__preview';
         stage.append(canvas);
 
-        const shuffle = el('button', 'btn btn--ghost btn--small', 'Shuffle look');
+        const shuffle = localized('button', 'btn btn--ghost btn--small', 'creator.shuffle');
         shuffle.type = 'button';
         shuffle.addEventListener('click', () => {
           state.look = randomLook();
           state.preview.rebuild(state.look);
         });
 
-        const retake = el('button', 'btn btn--ghost', 'Retake');
+        const retake = localized('button', 'btn btn--ghost', 'creator.retake');
         retake.type = 'button';
         retake.addEventListener('click', () => {
           state.capture = null;
@@ -747,11 +726,15 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           startCamera();
         });
 
-        const cancelBtn = el('button', 'btn btn--ghost', 'Cancel');
+        const cancelBtn = localized('button', 'btn btn--ghost', 'common.cancel');
         cancelBtn.type = 'button';
         cancelBtn.addEventListener('click', cancel);
 
-        const add = el('button', 'btn btn--primary', 'Add to tank');
+        const add = localized(
+          'button',
+          'btn btn--primary',
+          () => state.submitting ? 'creator.adding' : 'creator.addToTank',
+        );
         add.type = 'button';
         add.disabled = state.submitting;
         add.addEventListener('click', () => submit(add));
@@ -767,9 +750,9 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         looks.append(shuffle);
 
         dialog.append(
-          el('h2', 'modal__title', 'Meet your fish'),
+          localized('h2', 'modal__title', 'creator.previewTitle'),
           stage,
-          ...(error ? [el('p', 'modal__error', error)] : []),
+          ...(errorKey ? [localized('p', 'modal__error', errorKey)] : []),
           looks,
           actions,
         );
@@ -785,7 +768,7 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
         if (state.submitting || !state.capture) return;
         state.submitting = true;
         button.disabled = true;
-        button.textContent = 'Adding…';
+        button.textContent = t('creator.adding');
 
         try {
           const { fish } = await api.createFish(tankId, {
@@ -795,14 +778,13 @@ export function openFishCreator({ tankId, shareUrl, onCreated }) {
           track('fish_added', { tank_id: tankId, fish_id: fish.id });
           onCreated?.(fish);
           close(fish);
-          toast('You are in the tank', { tone: 'good' });
+          toast('creator.added', { tone: 'good' });
         } catch (err) {
           state.submitting = false;
-          const message =
-            err instanceof ApiError
-              ? err.message
-              : 'Could not reach the tank. Check your connection and try again.';
-          renderPreview(message);
+          const errorKey = err instanceof ApiError
+            ? `api.${err.code}`
+            : 'creator.submitError';
+          renderPreview(errorKey);
         }
       }
 

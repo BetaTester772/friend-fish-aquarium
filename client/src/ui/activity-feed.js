@@ -1,5 +1,11 @@
-import { activitySegments } from '../../../shared/activity-text.js';
 import { track } from '../analytics.js';
+import {
+  activitySegments,
+  bindAttribute,
+  formatDateTime,
+  subscribeLocale,
+  t,
+} from '../i18n.js';
 
 const VISIBLE = 6;
 
@@ -11,6 +17,7 @@ const VISIBLE = 6;
  * toggle to expand the rest — the tank has to stay visible behind it.
  */
 export function createActivityFeed({ container, state }) {
+  bindAttribute(container, 'aria-label', 'activity.label');
   const list = document.createElement('ul');
   list.className = 'activity__list';
 
@@ -41,8 +48,10 @@ export function createActivityFeed({ container, state }) {
     );
 
     toggle.textContent = expanded
-      ? 'Hide log'
-      : `Activity${activity.length > VISIBLE ? ` (${activity.length})` : ''}`;
+      ? t('activity.hide')
+      : t(activity.length > VISIBLE ? 'activity.titleCount' : 'activity.title', {
+          count: activity.length,
+        });
     toggle.setAttribute('aria-expanded', String(expanded));
   }
 
@@ -50,7 +59,7 @@ export function createActivityFeed({ container, state }) {
     const item = document.createElement('li');
     item.className = 'activity__item';
     item.dataset.type = event.type;
-    item.title = new Date(event.createdAt).toLocaleString();
+    item.title = formatDateTime(event.createdAt);
 
     for (const segment of activitySegments(event)) {
       const node = document.createElement(segment.strong ? 'b' : 'span');
@@ -63,16 +72,18 @@ export function createActivityFeed({ container, state }) {
   function emptyState() {
     const item = document.createElement('li');
     item.className = 'activity__empty';
-    item.textContent = 'Nothing has happened in here yet.';
+    item.textContent = t('activity.empty');
     return item;
   }
 
   render(state.get().activity);
   const stop = state.on('activity', render);
+  const stopLocale = subscribeLocale(() => render(state.get().activity));
 
   return {
     destroy() {
       stop();
+      stopLocale();
       container.replaceChildren();
     },
   };

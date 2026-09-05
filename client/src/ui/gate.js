@@ -1,5 +1,12 @@
 import { api, ApiError } from '../api.js';
 import { openModal, el } from './modal.js';
+import { apiErrorMessage, bindAttribute, bindText, t } from '../i18n.js';
+
+const localized = (tag, className, key, variables) => {
+  const node = el(tag, className);
+  bindText(node, key, variables);
+  return node;
+};
 
 /** Query parameter carrying the share token in an invite link. */
 export const GATE_PARAM = 'k';
@@ -53,9 +60,9 @@ export function promptForPassphrase() {
       input.type = 'password';
       input.id = 'ffa-passphrase';
       input.autocomplete = 'current-password';
-      input.placeholder = 'the passphrase';
+      bindAttribute(input, 'placeholder', 'gate.placeholder');
 
-      const label = el('label', 'field__label', 'Passphrase');
+      const label = localized('label', 'field__label', 'gate.label');
       label.htmlFor = input.id;
 
       const field = el('div', 'field');
@@ -63,8 +70,11 @@ export function promptForPassphrase() {
 
       const error = el('p', 'modal__error');
       error.hidden = true;
+      let errorKey = 'error.generic';
+      bindText(error, () => errorKey);
 
-      const submit = el('button', 'btn btn--primary', 'Come in');
+      let checking = false;
+      const submit = localized('button', 'btn btn--primary', () => checking ? 'gate.checking' : 'gate.enter');
       submit.type = 'submit';
 
       const actions = el('div', 'modal__actions');
@@ -76,7 +86,8 @@ export function promptForPassphrase() {
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         submit.disabled = true;
-        submit.textContent = 'Checking…';
+        checking = true;
+        submit.textContent = t('gate.checking');
         error.hidden = true;
 
         try {
@@ -85,26 +96,24 @@ export function promptForPassphrase() {
         } catch (err) {
           // The server pauses before answering a wrong guess, so this lands
           // a moment later on purpose.
-          error.textContent =
-            err instanceof ApiError && err.status === 403
-              ? err.message
-              : 'Could not reach the tank. Try again.';
+          errorKey = err instanceof ApiError && err.status === 403
+            ? `api.${err.code}`
+            : 'gate.reachError';
+          error.textContent = err instanceof ApiError && err.status === 403
+            ? apiErrorMessage(err)
+            : t('gate.reachError');
           error.hidden = false;
           input.select();
         } finally {
           submit.disabled = false;
-          submit.textContent = 'Come in';
+          checking = false;
+          submit.textContent = t('gate.enter');
         }
       });
 
       dialog.append(
-        el('h2', 'modal__title', 'this tank is private'),
-        el(
-          'p',
-          'modal__body',
-          'Ask whoever sent you the link for the passphrase. It is the same one ' +
-            'for everybody.',
-        ),
+        localized('h2', 'modal__title', 'gate.title'),
+        localized('p', 'modal__body', 'gate.body'),
         form,
       );
       input.focus();
