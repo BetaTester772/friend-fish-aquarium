@@ -2,6 +2,7 @@ import { api, ApiError } from '../api.js';
 import { track } from '../analytics.js';
 import { toast } from './toast.js';
 import { confirmModal, el } from './modal.js';
+import { apiErrorKey, subscribeLocale, t, translateStatus } from '../i18n.js';
 
 /**
  * The popover that opens when a fish is picked: who it is, how full it is, and
@@ -75,39 +76,43 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
     aquarium.setSelected(fish.id);
 
     face.src = fish.faceAssetUrl;
-    name.textContent = `${fish.ownerName}${mine ? ' (you)' : ''}`;
-    status.textContent = `${fish.status} · ${Math.round(fish.fullness)}/${max}`;
+    name.textContent = `${fish.ownerName}${mine ? t('fish.mineSuffix') : ''}`;
+    status.textContent = t('fish.statusLine', {
+      status: translateStatus(fish.status),
+      fullness: Math.round(fish.fullness),
+      max,
+    });
     fill.style.width = `${Math.round((fish.fullness / max) * 100)}%`;
 
     secondary.hidden = !mine;
-    secondary.textContent = 'Remove my fish';
+    secondary.textContent = t('fish.remove');
 
     if (!viewer) {
-      hint.textContent = 'Pick a name to start feeding your friends.';
-      action.textContent = 'Join the tank';
+      hint.textContent = t('fish.joinHint');
+      action.textContent = t('fish.join');
       action.disabled = false;
       return;
     }
 
     if (mine && !rules?.allowSelfFeed) {
-      hint.textContent = 'This one is yours. Wait for a friend to feed it.';
-      action.textContent = 'Feed';
+      hint.textContent = t('fish.selfHint');
+      action.textContent = t('fish.feed');
       action.disabled = true;
       return;
     }
 
     if (fish.status === 'full') {
-      hint.textContent = `${fish.ownerName} is full. Come back when they've digested.`;
-      action.textContent = 'Feed';
+      hint.textContent = t('fish.fullHint', { name: fish.ownerName });
+      action.textContent = t('fish.feed');
       action.disabled = true;
       return;
     }
 
     const waiting = cooldownLeft(fish.id);
     hint.textContent = waiting
-      ? `Hold on — ${Math.ceil(waiting / 1000)}s`
-      : `One feed is worth ${rules?.fullness.feedAmount ?? 15} fullness.`;
-    action.textContent = feeding ? 'Feeding…' : 'Feed';
+      ? t('fish.cooldown', { seconds: Math.ceil(waiting / 1000) })
+      : t('fish.feedWorth', { amount: rules?.fullness.feedAmount ?? 15 });
+    action.textContent = t(feeding ? 'fish.feeding' : 'fish.feed');
     action.disabled = feeding || waiting > 0;
   }
 
@@ -146,29 +151,29 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
       if (result === 'accepted') {
         lastFedAt.set(fish.id, Date.now());
         aquarium.dropFood(fish.id);
-        toast(`Fed ${fish.ownerName}`, { tone: 'good' });
+        toast('fish.fedToast', { tone: 'good', variables: { name: fish.ownerName } });
       } else if (result === 'full') {
-        toast(`${fish.ownerName} is full`, { tone: 'warn' });
+        toast('fish.fullToast', { tone: 'warn', variables: { name: fish.ownerName } });
       } else if (result === 'ignored') {
         lastFedAt.set(fish.id, Date.now());
-        toast(`${fish.ownerName} ignored you`, { tone: 'warn' });
+        toast('fish.ignoredToast', { tone: 'warn', variables: { name: fish.ownerName } });
       }
     } catch (err) {
-      if (err instanceof ApiError && err.status === 429) {
+      if (err instanceof ApiError && err.body.result === 'cooldown') {
         // Server-side cooldown. Mirror it locally so the button stays disabled
         // for the rest of the window instead of inviting another rejection.
         const wait = err.body.retryAfterMs ?? 0;
         const cooldown = state.get().rules?.feedCooldownMs ?? 8000;
         lastFedAt.set(fish.id, Date.now() - (cooldown - wait));
         track('fish_feed_result', { result: 'cooldown', target_fish_id: fish.id });
-        toast('Slow down', { tone: 'warn' });
-      } else if (err instanceof ApiError && err.status === 404) {
+        toast('fish.slowDown', { tone: 'warn' });
+      } else if (err instanceof ApiError && err.code === 'fish_not_found') {
         // The fish was deleted between render and click (spec §10).
         state.removeFish({ id: fish.id });
-        toast('That fish just left the tank', { tone: 'warn' });
+        toast('fish.left', { tone: 'warn' });
       } else {
         track('fish_feed_result', { result: 'error', target_fish_id: fish.id });
-        toast('Could not feed right now', { tone: 'warn' });
+        toast(err instanceof ApiError ? apiErrorKey(err) : 'fish.feedError', { tone: 'warn' });
       }
     } finally {
       feeding = false;
@@ -192,11 +197,9 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
     if (!fish) return;
 
     const confirmed = await confirmModal({
-      title: 'Remove your fish?',
-      body:
-        'Your fish leaves the tank and the face image we stored for it is ' +
-        'deleted from the server. You can always make a new one.',
-      confirmLabel: 'Remove it',
+      titleKey: 'fish.removeTitle',
+      bodyKey: 'fish.removeBody',
+      confirmKey: 'fish.removeConfirm',
       danger: true,
     });
     if (!confirmed) return;
@@ -207,9 +210,15 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
       state.select(null);
       // The "Add your fish" CTA reappears on its own now that the viewer
       // has no fish in this tank.
-      toast('Your fish is gone', { tone: 'neutral' });
-    } catch {
-      toast('Could not remove your fish', { tone: 'warn' });
+      toast('fish.removed', { tone: 'neutral' });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'fish_not_found') {
+        state.removeFish({ id: fish.id });
+        state.select(null);
+        toast('fish.left', { tone: 'warn' });
+      } else {
+        toast(err instanceof ApiError ? apiErrorKey(err) : 'fish.removeError', { tone: 'warn' });
+      }
     }
   });
 
@@ -221,6 +230,7 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
   const stopSelection = state.on('selection', render);
   const stopFish = state.on('fish', render);
   const stopViewer = state.on('viewer', render);
+  const stopLocale = subscribeLocale(render);
   const stopFrame = aquarium.onFrame(reposition);
 
   return {
@@ -229,6 +239,7 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
       stopSelection();
       stopFish();
       stopViewer();
+      stopLocale();
       stopFrame();
       card.remove();
     },

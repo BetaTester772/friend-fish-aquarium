@@ -10,6 +10,8 @@ import { createActivityFeed } from './ui/activity-feed.js';
 import { createHud, promptForName } from './ui/hud.js';
 import { toast } from './ui/toast.js';
 import { promptForPassphrase, unlockFromLink, inviteLink } from './ui/gate.js';
+import { bindText } from './i18n.js';
+import { createLanguageSelector } from './ui/language-selector.js';
 
 /**
  * Wires the tank together: load a snapshot, render it, keep it in sync, and
@@ -18,6 +20,7 @@ import { promptForPassphrase, unlockFromLink, inviteLink } from './ui/gate.js';
  * disagree.
  */
 async function main() {
+  createLanguageSelector();
   const state = createState();
 
   // An invite link carrying the share token admits the visitor before the first
@@ -44,11 +47,7 @@ async function main() {
   } catch (err) {
     console.error(err);
     track('webgl_unavailable', { browser: navigator.userAgent });
-    showFatal(
-      'This browser cannot draw the tank — it has no WebGL. Turn on hardware ' +
-        'acceleration in your browser settings, or open the tank on another ' +
-        'device.',
-    );
+    showFatal('fatal.webgl');
     return;
   }
   await aquarium.syncFish(snapshot.fish);
@@ -66,7 +65,7 @@ async function main() {
 
   state.on('connection', (connection) => {
     if (connection === 'reconnecting') {
-      toast('Lost the tank — reconnecting', { tone: 'warn', duration: 1800 });
+      toast('connection.reconnecting', { tone: 'warn', duration: 1800 });
     }
   });
 
@@ -174,15 +173,15 @@ async function loadTank() {
       return loadTank();
     }
     if (err instanceof ApiError && err.status === 404) {
-      showFatal('That tank link does not exist (any more).');
+      showFatal('fatal.notFound');
     } else {
-      showFatal('Could not reach the tank. Is the server running?');
+      showFatal('fatal.unreachable');
     }
     return null;
   }
 }
 
-function showFatal(message) {
+function showFatal(messageKey) {
   const banner = document.createElement('div');
   banner.className = 'modal-backdrop';
   banner.innerHTML = '<div class="modal"></div>';
@@ -190,16 +189,16 @@ function showFatal(message) {
 
   const title = document.createElement('h2');
   title.className = 'modal__title';
-  title.textContent = 'The tank is closed';
+  bindText(title, 'fatal.title');
 
   const body = document.createElement('p');
   body.className = 'modal__body';
-  body.textContent = message;
+  bindText(body, messageKey);
 
   const retry = document.createElement('button');
   retry.className = 'btn btn--primary';
   retry.type = 'button';
-  retry.textContent = 'Reload';
+  bindText(retry, 'common.reload');
   retry.addEventListener('click', () => location.reload());
 
   const actions = document.createElement('div');
@@ -212,5 +211,5 @@ function showFatal(message) {
 
 main().catch((err) => {
   console.error(err);
-  showFatal('Something went wrong setting up the tank.');
+  showFatal('fatal.setup');
 });

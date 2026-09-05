@@ -78,7 +78,7 @@ export function normalizeLandmarks(landmarks, frameWidth, frameHeight) {
 }
 
 /**
- * Is the face usable? Returns a hint string when it isn't (spec §10).
+ * Is the face usable? Returns a translatable semantic code when it isn't.
  *
  * The thresholds are deliberately loose. They were tight enough before that a
  * phone could sit on "Come a bit closer" forever: the stream was being forced
@@ -145,7 +145,7 @@ export function framingHint(landmarks) {
   const width = maxX - minX;
   const height = maxY - minY;
 
-  if (width < 0.12 && height < 0.15) return 'Come a bit closer.';
+  if (width < 0.12 && height < 0.15) return 'too_far';
 
   // There is no "too close" rule. A large face is not a problem worth refusing
   // a photo over — the cutout crops to the face bounds anyway, so the worst
@@ -155,7 +155,7 @@ export function framingHint(landmarks) {
   const centreX = (minX + maxX) / 2;
   const centreY = (minY + maxY) / 2;
   if (centreX < 0.15 || centreX > 0.85 || centreY < 0.12 || centreY > 0.88) {
-    return 'Center your face in the frame.';
+    return 'off_center';
   }
   return null;
 }

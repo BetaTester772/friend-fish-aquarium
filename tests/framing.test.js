@@ -60,7 +60,7 @@ test('a few wild landmarks do not get to define the face', () => {
 
   // And the framing rules now see a perfectly ordinary face.
   assert.equal(framingHint(dirty), null);
-  assert.match(framingHint(mesh({ ...centredFace, x: -0.2 })), /Center/);
+  assert.equal(framingHint(mesh({ ...centredFace, x: -0.2 })), 'off_center');
 });
 
 test('normalizing is not fooled into scaling a good frame by one stray', () => {
@@ -103,7 +103,7 @@ test('pixel-coordinate landmarks are brought back into [0,1]', () => {
 
   // And the framing rules now agree it is a perfectly good face.
   assert.equal(framingHint(fixed), null);
-  assert.match(framingHint(inPixels), /Center|back/, 'raw pixels would be refused');
+  assert.equal(framingHint(inPixels), 'off_center', 'raw pixels would be refused');
 });
 
 test('already-normalized landmarks are left exactly as they are', () => {
@@ -148,11 +148,11 @@ test('a large face is not refused for being too close', () => {
 });
 
 test('a genuinely tiny face is asked to come closer', () => {
-  assert.match(framingHint(centred(0.06, 0.08), 1), /closer/);
+  assert.equal(framingHint(centred(0.06, 0.08), 1), 'too_far');
 });
 
 test('a face off at the edge is asked to centre', () => {
-  assert.match(framingHint(face({ x: 0.86, y: 0.4, w: 0.2, h: 0.3 }), 1), /Center/);
+  assert.equal(framingHint(face({ x: 0.86, y: 0.4, w: 0.2, h: 0.3 }), 1), 'off_center');
 });
 
 test('a well-framed face is never refused for being "too many faces"', () => {

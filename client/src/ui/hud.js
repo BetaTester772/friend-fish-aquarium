@@ -2,6 +2,13 @@ import { api } from '../api.js';
 import { openModal, confirmModal, el } from './modal.js';
 import { inviteLink } from './gate.js';
 import { toast } from './toast.js';
+import { apiErrorMessage, bindText, subscribeLocale, t } from '../i18n.js';
+
+const localized = (tag, className, key, variables) => {
+  const node = el(tag, className);
+  bindText(node, key, variables);
+  return node;
+};
 
 /**
  * Top bar and the "Add your fish" CTA (spec S1, S2, FR-004, FR-011).
@@ -31,7 +38,7 @@ export function createHud({
 
   // "Add your fish", bottom center, as in the Reel.
   const ctaWrap = el('div', 'hud__cta');
-  const cta = el('button', 'btn btn--primary', 'Add your fish');
+  const cta = localized('button', 'btn btn--primary', 'hud.addFish');
   cta.type = 'button';
   cta.addEventListener('click', () => onAddFish());
   ctaWrap.append(cta);
@@ -64,45 +71,39 @@ export function createHud({
     });
 
     menu.append(
-      el('div', 'menu__note', `Signed in as ${viewer.displayName}`),
-      menuItem(gate?.enabled ? 'Copy invite link (lets them in)' : 'Copy invite link', async () => {
+      localized('div', 'menu__note', 'hud.signedInAs', { name: viewer.displayName }),
+      menuItem(gate?.enabled ? 'hud.copyInvitePrivate' : 'hud.copyInvite', async () => {
         try {
           await navigator.clipboard.writeText(inviteUrl);
-          toast('Invite link copied', { tone: 'good' });
+          toast('hud.inviteCopied', { tone: 'good' });
         } catch {
-          window.prompt('Copy this invite link', inviteUrl);
+          window.prompt(t('hud.copyInvitePrompt'), inviteUrl);
         }
         closeMenu();
       }),
-      menuItem('Change my name', async () => {
+      menuItem('hud.changeName', async () => {
         closeMenu();
         const renamed = await promptForName({ state, initial: viewer.displayName });
         // The name is snapshotted onto the fish records, so pull a fresh
         // tank rather than leaving the old one over your own fish.
         if (renamed) onReload?.();
       }),
-      el(
-        'div',
-        'menu__note',
-        'Your face picture is stored only so friends recognise your fish.',
-      ),
-      menuItem('Sign out', async () => {
+      localized('div', 'menu__note', 'hud.facePrivacy'),
+      menuItem('hud.signOut', async () => {
         closeMenu();
         await api.signOut();
         state.setViewer(null);
         onSignedOut?.();
-        toast('Signed out');
+        toast('hud.signedOut');
       }),
       menuItem(
-        'Delete my fish and data',
+        'hud.deleteData',
         async () => {
           closeMenu();
           const confirmed = await confirmModal({
-            title: 'Delete everything?',
-            body:
-              'This removes your fish, deletes the face image stored on the ' +
-              'server, and forgets your account. It cannot be undone.',
-            confirmLabel: 'Delete it all',
+            titleKey: 'hud.deleteTitle',
+            bodyKey: 'hud.deleteBody',
+            confirmKey: 'hud.deleteConfirm',
             danger: true,
           });
           if (!confirmed) return;
@@ -110,7 +111,7 @@ export function createHud({
           state.removeFish({ ownerUserId: viewer.id });
           state.setViewer(null);
           onSignedOut?.();
-          toast('Deleted. Nothing of yours is left in the tank.');
+          toast('hud.deleted');
         },
         'menu__item menu__item--danger',
       ),
@@ -121,8 +122,8 @@ export function createHud({
     menu.querySelector('button')?.focus();
   }
 
-  function menuItem(label, onClick, className = 'menu__item') {
-    const button = el('button', className, label);
+  function menuItem(key, onClick, className = 'menu__item') {
+    const button = localized('button', className, key);
     button.type = 'button';
     button.setAttribute('role', 'menuitem');
     button.addEventListener('click', onClick);
@@ -134,8 +135,11 @@ export function createHud({
 
     subtitle.textContent =
       connection === 'reconnecting'
-        ? 'reconnecting…'
-        : `${fish.length} fish · ${members.filter((m) => m.online).length} here now`;
+        ? t('hud.reconnecting')
+        : t('hud.summary', {
+            fishCount: fish.length,
+            onlineCount: members.filter((m) => m.online).length,
+          });
     title.textContent = tank?.name ?? 'friend fish aquarium';
 
     if (viewer) {
@@ -150,7 +154,7 @@ export function createHud({
       chip.addEventListener('click', () => (menu ? closeMenu() : openMenu()));
       anchor.replaceChildren(chip);
     } else {
-      const join = el('button', 'btn btn--ghost btn--small', 'Who are you?');
+      const join = localized('button', 'btn btn--ghost btn--small', 'hud.whoAreYou');
       join.type = 'button';
       join.addEventListener('click', () => onSignIn());
       anchor.replaceChildren(join);
@@ -168,6 +172,7 @@ export function createHud({
     state.on('members', render),
     state.on('connection', render),
     state.on('hydrated', render),
+    subscribeLocale(render),
   ];
 
   return {
@@ -195,15 +200,17 @@ export function promptForName({ state, initial = '' } = {}) {
       input.autocomplete = 'nickname';
 
       const field = el('div', 'field');
-      const label = el('label', 'field__label', 'What should the tank call you?');
+      const label = localized('label', 'field__label', 'name.label');
       label.htmlFor = 'ffa-name';
       input.id = 'ffa-name';
       field.append(label, input);
 
       const error = el('p', 'modal__error');
       error.hidden = true;
+      let errorKey = 'error.generic';
+      bindText(error, () => errorKey);
 
-      const submit = el('button', 'btn btn--primary', initial ? 'Save' : 'Join the tank');
+      const submit = localized('button', 'btn btn--primary', initial ? 'name.save' : 'name.join');
       submit.type = 'submit';
 
       const form = document.createElement('form');
@@ -219,19 +226,16 @@ export function promptForName({ state, initial = '' } = {}) {
           state.setViewer({ ...user, fishId: state.myFish()?.id ?? null });
           close(user);
         } catch (err) {
-          error.textContent = err.message;
+          errorKey = err?.code && `api.${err.code}`;
+          error.textContent = apiErrorMessage(err);
           error.hidden = false;
           submit.disabled = false;
         }
       });
 
       dialog.append(
-        el('h2', 'modal__title', initial ? 'Change your name' : 'Join the tank'),
-        el(
-          'p',
-          'modal__body',
-          'No password, no email. Just the name your friends will see over your fish.',
-        ),
+        localized('h2', 'modal__title', initial ? 'name.changeTitle' : 'name.joinTitle'),
+        localized('p', 'modal__body', 'name.body'),
         form,
       );
       input.focus();

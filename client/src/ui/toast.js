@@ -1,3 +1,5 @@
+import { bindText } from '../i18n.js';
+
 const container = () => document.getElementById('toasts');
 
 /**
@@ -5,14 +7,14 @@ const container = () => document.getElementById('toasts');
  * cooldown — all surface here so the player always learns what happened
  * (spec AC-09).
  */
-export function toast(message, { tone = 'neutral', duration = 2600 } = {}) {
+export function toast(key, { tone = 'neutral', duration = 2600, variables = {} } = {}) {
   const root = container();
   if (!root) return;
 
   const el = document.createElement('div');
   el.className = 'toast';
   el.dataset.tone = tone;
-  el.textContent = message;
+  bindText(el, key, variables);
   root.append(el);
 
   setTimeout(() => {
