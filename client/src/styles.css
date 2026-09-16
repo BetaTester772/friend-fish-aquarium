@@ -971,7 +971,64 @@ button {
 
 /* -------------------------------------------------------------- responsive */
 
+.fishing[data-layout='tablet'],
+.fishing[data-layout='stacked'] {
+  bottom: calc(var(--safe-bottom) + 62px);
+}
+
+body:has(.fishing[data-layout='tablet']:not([hidden])) .activity {
+  bottom: calc(var(--safe-bottom) + 62px);
+}
+
+.fishing[data-layout='stacked'] {
+  width: min(300px, calc(100vw - 28px));
+}
+
+.fishing[data-layout='stacked'] .fishing__copy {
+  margin-bottom: 2px;
+}
+
+.fishing[data-layout='stacked'] .fishing__hint {
+  display: none;
+}
+
+body:has(.fishing[data-layout='stacked']:not([hidden])) .activity {
+  bottom: calc(var(--safe-bottom) + 236px);
+  width: calc(100vw - 28px);
+}
+
+body:has(.fishing[data-layout='stacked']:not([hidden])) .activity__list {
+  max-height: 22vh;
+}
+
+body:has(.fishing[data-layout='stacked']:not([hidden])) .toasts {
+  bottom: calc(var(--safe-bottom) + 296px + 22vh);
+}
+
+.fishing[data-layout='compact'] {
+  width: 148px;
+}
+
+.fishing[data-layout='compact'] .fishing__copy {
+  display: none;
+}
+
+body:has(.fishing[data-layout='compact']:not([hidden])) .activity {
+  width: min(280px, calc(100vw - 190px));
+}
+
+body:has(.fishing[data-layout='compact']:not([hidden])) .activity__list {
+  max-height: 24vh;
+}
+
 @media (max-width: 720px) {
+  body:has(.fish-card:not([hidden])) .activity,
+  body:has(.fish-card:not([hidden])) .fishing,
+  body:has(.fish-card:not([hidden])) .hud__cta {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .activity {
     width: calc(100vw - 28px);
     /* Clear the centred "Add your fish" button instead of sitting under it. */
@@ -985,20 +1042,6 @@ button {
   .toasts {
     bottom: calc(var(--safe-bottom) + 132px);
   }
-
-  .fishing {
-    bottom: calc(var(--safe-bottom) + 62px);
-    width: min(300px, calc(100vw - 28px));
-  }
-
-  .fishing__copy {
-    margin-bottom: 2px;
-  }
-
-  .fishing__hint {
-    display: none;
-  }
-
 
   .hud__brand {
     padding: 6px 12px;

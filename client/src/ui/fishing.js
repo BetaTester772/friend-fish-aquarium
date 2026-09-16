@@ -1,5 +1,10 @@
 import { api, ApiError } from '../api.js';
-import { createFishingRound, fishingPhase, reelFishing } from '../fishing-game.js';
+import {
+  createFishingRound,
+  fishingPhase,
+  reelFishing,
+} from '../fishing-game.js';
+import { responsiveFishingLayout } from '../responsive-layout.js';
 import { apiErrorKey, subscribeLocale, t } from '../i18n.js';
 import { track } from '../analytics.js';
 import { toast } from './toast.js';
@@ -38,6 +43,10 @@ export function createFishing({ state, effects }) {
   let round = null;
   let timer = null;
   let submitting = false;
+
+  function renderLayout() {
+    root.dataset.layout = responsiveFishingLayout(innerWidth, innerHeight);
+  }
 
   function eligibleFish() {
     return state.get().fish;
@@ -149,6 +158,8 @@ export function createFishing({ state, effects }) {
   });
   const stopFish = state.on('fish', render);
   const stopLocale = subscribeLocale(render);
+  window.addEventListener('resize', renderLayout);
+  renderLayout();
   render();
 
   return {
@@ -158,6 +169,7 @@ export function createFishing({ state, effects }) {
       stopViewer();
       stopFish();
       stopLocale();
+      window.removeEventListener('resize', renderLayout);
       root.remove();
     },
   };

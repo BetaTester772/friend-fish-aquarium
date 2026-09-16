@@ -4,6 +4,7 @@ import { toast } from './toast.js';
 import { confirmModal, el } from './modal.js';
 import { apiErrorKey, subscribeLocale, t, translateStatus } from '../i18n.js';
 import { REACTION_EMOJIS } from '../../../shared/social-interactions.js';
+import { fishCardTopInset } from '../responsive-layout.js';
 
 /**
  * The popover that opens when a fish is picked: who it is, how full it is, and
@@ -187,7 +188,16 @@ export function createFishCard({ state, aquarium, effects, onRequestJoin }) {
 
     const rect = card.getBoundingClientRect();
     const x = clamp(point.x - rect.width / 2, 8, innerWidth - rect.width - 8);
-    const y = clamp(point.y - rect.height - 46, 8, innerHeight - rect.height - 8);
+    const controlsBottom = Math.max(
+      document.querySelector('.language-selector')?.getBoundingClientRect().bottom ?? 0,
+      document.querySelector('.hud__right')?.getBoundingClientRect().bottom ?? 0,
+    );
+    const topInset = fishCardTopInset(innerWidth, innerHeight, controlsBottom);
+    const y = clamp(
+      point.y - rect.height - 46,
+      topInset,
+      innerHeight - rect.height - 8,
+    );
     card.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
     card.style.left = '0';
     card.style.top = '0';
