@@ -47,6 +47,7 @@ export function createAquarium({ canvas }) {
   buildEnvironment(scene);
 
   const swimmers = new Map(); // fishId -> FishSwimmer
+  const motionEffects = new Map(); // fishId -> temporary nudge / catch motion
   const pellets = [];
   const clock = new THREE.Clock();
   const raycaster = new THREE.Raycaster();
@@ -123,6 +124,7 @@ export function createAquarium({ canvas }) {
     scene.remove(swimmer.group);
     disposeFish(swimmer.group);
     swimmers.delete(fishId);
+    motionEffects.delete(fishId);
     if (hoveredId === fishId) hoveredId = null;
   }
 
@@ -222,6 +224,49 @@ export function createAquarium({ canvas }) {
     }
   }
 
+  function playHit(fishId) {
+    if (!swimmers.has(fishId)) return;
+    motionEffects.set(fishId, {
+      kind: 'hit',
+      startedAt: clock.elapsedTime,
+      appliedY: 0,
+      appliedRoll: 0,
+    });
+  }
+
+  function playCatch(fishId) {
+    if (!swimmers.has(fishId)) return;
+    motionEffects.set(fishId, {
+      kind: 'catch',
+      startedAt: clock.elapsedTime,
+      appliedY: 0,
+      appliedRoll: 0,
+    });
+  }
+
+  function applyMotionEffect(swimmer, elapsed) {
+    const fishId = swimmer.group.userData.fish.id;
+    const effect = motionEffects.get(fishId);
+    if (!effect) return;
+
+    const duration = effect.kind === 'hit' ? 0.75 : 1.45;
+    const progress = (elapsed - effect.startedAt) / duration;
+    if (progress >= 1) {
+      motionEffects.delete(fishId);
+      return;
+    }
+
+    if (effect.kind === 'hit') {
+      effect.appliedY = Math.sin(progress * Math.PI * 6) * 0.18 * (1 - progress);
+      effect.appliedRoll = Math.sin(progress * Math.PI * 8) * 0.48 * (1 - progress);
+    } else {
+      effect.appliedY = Math.sin(progress * Math.PI) * 3.2;
+      effect.appliedRoll = Math.sin(progress * Math.PI * 2) * 0.12;
+    }
+    swimmer.group.position.y += effect.appliedY;
+    swimmer.group.rotation.z += effect.appliedRoll;
+  }
+
   /**
    * Pushes overlapping fish apart. O(n^2), which is nothing for a friend group
    * and keeps the shoal readable when the visible box is narrow.
@@ -280,7 +325,15 @@ export function createAquarium({ canvas }) {
     const elapsed = clock.elapsedTime;
 
     for (const swimmer of swimmers.values()) {
+      const effect = motionEffects.get(swimmer.group.userData.fish.id);
+      if (effect) {
+        swimmer.group.position.y -= effect.appliedY;
+        swimmer.group.rotation.z -= effect.appliedRoll;
+        effect.appliedY = 0;
+        effect.appliedRoll = 0;
+      }
       swimmer.update(dt, elapsed, camera);
+      applyMotionEffect(swimmer, elapsed);
 
       // Highlight: the hovered or selected fish lifts slightly toward the front.
       const emphasised =
@@ -318,6 +371,8 @@ export function createAquarium({ canvas }) {
     setHovered,
     setSelected,
     dropFood,
+    playHit,
+    playCatch,
     onFrame(cb) {
       frameCallbacks.add(cb);
       return () => frameCallbacks.delete(cb);

@@ -43,4 +43,7 @@ export const api = {
   createFish: (tankId, payload) => request('POST', `/tanks/${tankId}/fish`, payload),
   deleteFish: (fishId) => request('DELETE', `/fish/${fishId}`),
   feed: (fishId) => request('POST', `/fish/${fishId}/feed`),
+  react: (fishId, emoji) => request('POST', `/fish/${fishId}/reactions`, { emoji }),
+  hit: (fishId) => request('POST', `/fish/${fishId}/hit`),
+  catchFish: (fishId) => request('POST', `/fish/${fishId}/catch`),
 };

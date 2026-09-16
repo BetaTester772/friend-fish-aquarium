@@ -401,6 +401,108 @@ test('the invite code opens the same tank', async (t) => {
   assert.equal(missing.status, 404);
 });
 
+test('emoji reactions validate input, persist accepted actions, and enforce cooldowns', async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+
+  const tank = await defaultTank(app);
+  const target = await joinWithFish(app, tank.id, 'beandog');
+  const actor = await joinWithFish(app, tank.id, 'clare');
+
+  const anonymous = await app.client('POST', `/api/fish/${target.fish.id}/reactions`, {
+    emoji: '❤️',
+  });
+  assert.equal(anonymous.status, 401);
+
+  const invalid = await actor.client('POST', `/api/fish/${target.fish.id}/reactions`, {
+    emoji: '🔥',
+  });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error, 'invalid_reaction');
+
+  const accepted = await actor.client('POST', `/api/fish/${target.fish.id}/reactions`, {
+    emoji: '❤️',
+  });
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(
+    {
+      kind: accepted.body.effect.kind,
+      fishId: accepted.body.effect.fishId,
+      actorName: accepted.body.effect.actorName,
+      emoji: accepted.body.effect.emoji,
+    },
+    { kind: 'reaction', fishId: target.fish.id, actorName: 'clare', emoji: '❤️' },
+  );
+  assert.match(accepted.body.effect.id, /^fx_/);
+
+  const row = await app.store.db.get(
+    `SELECT type, result FROM interactions
+      WHERE actor_user_id = ? AND target_fish_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [accepted.body.effect.actorId, target.fish.id],
+  );
+  assert.deepEqual(row, { type: 'reaction', result: '❤️' });
+
+  const cooldown = await actor.client('POST', `/api/fish/${target.fish.id}/reactions`, {
+    emoji: '😂',
+  });
+  assert.equal(cooldown.status, 429);
+  assert.equal(cooldown.body.error, 'interaction_cooldown');
+  assert.ok(cooldown.body.retryAfterMs > 0);
+});
+
+test('nudging is for friends while fishing can catch your own fish', async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+
+  const tank = await defaultTank(app);
+  const actor = await joinWithFish(app, tank.id, 'clare');
+  const target = await joinWithFish(app, tank.id, 'beandog');
+
+  const selfHit = await actor.client('POST', `/api/fish/${actor.fish.id}/hit`);
+  assert.equal(selfHit.status, 400);
+  assert.equal(selfHit.body.error, 'cannot_hit_self');
+
+  const hit = await actor.client('POST', `/api/fish/${target.fish.id}/hit`);
+  assert.equal(hit.status, 200);
+  assert.equal(hit.body.effect.kind, 'hit');
+  assert.equal(hit.body.effect.fishId, target.fish.id);
+
+  const caught = await actor.client('POST', `/api/fish/${actor.fish.id}/catch`);
+  assert.equal(caught.status, 200);
+  assert.equal(caught.body.effect.kind, 'catch');
+  assert.equal(caught.body.effect.fishId, actor.fish.id);
+});
+
+test('accepted social actions are delivered as fish.effect realtime events', async (t) => {
+  const app = await boot();
+  t.after(() => app.close());
+
+  const tank = await defaultTank(app);
+  const target = await joinWithFish(app, tank.id, 'beandog');
+  const actor = await joinWithFish(app, tank.id, 'clare');
+  const controller = new AbortController();
+  const stream = await fetch(`${app.base}/api/tanks/${tank.id}/events`, {
+    signal: controller.signal,
+  });
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await actor.client('POST', `/api/fish/${target.fish.id}/reactions`, { emoji: '👏' });
+
+  let received = '';
+  while (!received.includes('fish.effect')) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += decoder.decode(value, { stream: true });
+  }
+  controller.abort();
+
+  assert.match(received, /event: fish\.effect/);
+  assert.match(received, /"kind":"reaction"/);
+  assert.match(received, /"emoji":"👏"/);
+});
+
 test('realtime subscribers receive fish and activity events (FR-018)', async (t) => {
   const app = await boot();
   t.after(() => app.close());

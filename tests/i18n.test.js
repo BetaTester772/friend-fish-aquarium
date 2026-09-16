@@ -43,14 +43,14 @@ test('English and Korean catalogs have identical keys and interpolation variable
 
 test('fish statuses and dynamic values render in both languages', () => {
   assert.equal(translateStatus('hungry', 'en'), 'hungry');
-  assert.equal(translateStatus('hungry', 'ko'), '배고픔');
+  assert.equal(translateStatus('hungry', 'ko'), '배고파요');
   assert.equal(translateStatus('okay', 'en'), 'okay');
-  assert.equal(translateStatus('okay', 'ko'), '괜찮음');
+  assert.equal(translateStatus('okay', 'ko'), '잘 지내요');
   assert.equal(translateStatus('full', 'en'), 'full');
-  assert.equal(translateStatus('full', 'ko'), '배부름');
-  assert.equal(translate('fish.statusLine', { status: '배고픔', fullness: 37, max: 100 }, 'ko'), '배고픔 · 37/100');
+  assert.equal(translateStatus('full', 'ko'), '배불러요');
+  assert.equal(translate('fish.statusLine', { status: '배고파요', fullness: 37, max: 100 }, 'ko'), '배고파요 · 포만도 37/100');
   assert.equal(translate('fish.cooldown', { seconds: 4 }, 'en'), 'Hold on — 4s');
-  assert.equal(translate('fish.cooldown', { seconds: 4 }, 'ko'), '잠시만요 — 4초');
+  assert.equal(translate('fish.cooldown', { seconds: 4 }, 'ko'), '조금만 기다려 주세요 · 4초');
 });
 
 test('activity event codes preserve names while translating the sentence', () => {
@@ -68,11 +68,11 @@ test('activity event codes preserve names while translating the sentence', () =>
   ]);
 
   assert.equal(activitySegments({ type: 'full', payload: { targetName: '콩이' } }, 'ko')
-    .map(({ text }) => text).join(''), '콩이님이 배불러요');
+    .map(({ text }) => text).join(''), '콩이 물고기는 이제 배가 불러요');
   assert.equal(activitySegments({ type: 'presence', payload: { actorName: 'Clare' } }, 'en')
     .map(({ text }) => text).join(''), 'Clare is here');
   assert.equal(activitySegments({ type: 'ignored', payload: { actorName: 'Clare', targetName: '콩이' } }, 'ko')
-    .map(({ text }) => text).join(''), '콩이님이 Clare님을 모른 척했어요');
+    .map(({ text }) => text).join(''), '콩이님이 Clare님의 먹이를 슬쩍 피했어요');
 });
 
 test('known API error codes translate and unknown errors use the locale fallback', () => {
@@ -80,7 +80,7 @@ test('known API error codes translate and unknown errors use the locale fallback
   assert.equal(apiErrorKey({ code: 'brand_new_server_error' }, 'ko'), 'error.generic');
   assert.equal(apiErrorMessage({ code: 'invalid_name' }, 'en'), 'Pick a name between 1 and 24 characters.');
   assert.equal(apiErrorMessage({ code: 'invalid_name' }, 'ko'), '이름은 1자에서 24자 사이로 입력해 주세요.');
-  assert.equal(apiErrorMessage({ code: 'wrong_passphrase' }, 'ko'), '암호가 맞지 않아요.');
+  assert.equal(apiErrorMessage({ code: 'wrong_passphrase' }, 'ko'), '암호가 맞지 않아요. 다시 확인해 주세요.');
   assert.equal(apiErrorMessage({ code: 'brand_new_server_error' }, 'en'), 'Something went wrong. Try again.');
-  assert.equal(apiErrorMessage({ code: 'brand_new_server_error' }, 'ko'), '문제가 생겼어요. 다시 시도해 주세요.');
+  assert.equal(apiErrorMessage({ code: 'brand_new_server_error' }, 'ko'), '앗, 문제가 생겼어요. 잠시 뒤에 다시 해 주세요.');
 });

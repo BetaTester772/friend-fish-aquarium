@@ -12,6 +12,8 @@ import { toast } from './ui/toast.js';
 import { promptForPassphrase, unlockFromLink, inviteLink } from './ui/gate.js';
 import { bindText } from './i18n.js';
 import { createLanguageSelector } from './ui/language-selector.js';
+import { createFishEffects } from './ui/fish-effects.js';
+import { createFishing } from './ui/fishing.js';
 
 /**
  * Wires the tank together: load a snapshot, render it, keep it in sync, and
@@ -57,10 +59,13 @@ async function main() {
 
   // --------------------------------------------------------------- realtime
 
+  const effects = createFishEffects({ aquarium });
+
   const realtime = connectRealtime({
     state,
     tankId: snapshot.tank.id,
     heartbeatMs: snapshot.rules.presenceHeartbeatMs,
+    onFishEffect: effects.show,
   });
 
   state.on('connection', (connection) => {
@@ -114,8 +119,11 @@ async function main() {
   createFishCard({
     state,
     aquarium,
+    effects,
     onRequestJoin: signIn,
   });
+
+  createFishing({ state, effects });
 
   createHud({
     container: document.getElementById('hud'),

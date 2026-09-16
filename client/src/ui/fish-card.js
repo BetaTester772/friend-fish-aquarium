@@ -3,6 +3,8 @@ import { track } from '../analytics.js';
 import { toast } from './toast.js';
 import { confirmModal, el } from './modal.js';
 import { apiErrorKey, subscribeLocale, t, translateStatus } from '../i18n.js';
+import { REACTION_EMOJIS } from '../../../shared/social-interactions.js';
+import { fishCardTopInset } from '../responsive-layout.js';
 
 /**
  * The popover that opens when a fish is picked: who it is, how full it is, and
@@ -11,7 +13,7 @@ import { apiErrorKey, subscribeLocale, t, translateStatus } from '../i18n.js';
  * Feeding is fully resolved by the server, so this only reports the outcome —
  * accepted / full / ignored / cooldown (spec AC-08, AC-09).
  */
-export function createFishCard({ state, aquarium, onRequestJoin }) {
+export function createFishCard({ state, aquarium, effects, onRequestJoin }) {
   const card = el('div', 'fish-card');
   card.hidden = true;
 
@@ -38,13 +40,27 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
   const secondary = el('button', 'btn btn--ghost btn--small');
   secondary.type = 'button';
 
+  const reactions = el('div', 'fish-card__reactions');
+  const reactionButtons = REACTION_EMOJIS.map((emoji) => {
+    const button = el('button', 'fish-card__reaction');
+    button.type = 'button';
+    button.textContent = emoji;
+    button.dataset.emoji = emoji;
+    reactions.append(button);
+    return button;
+  });
+
+  const nudge = el('button', 'btn btn--ghost btn--small fish-card__nudge');
+  nudge.type = 'button';
+
   const actions = el('div', 'modal__actions');
   actions.append(secondary, action);
 
-  card.append(head, bar, hint, actions);
+  card.append(head, bar, hint, reactions, nudge, actions);
   document.body.append(card);
 
   let feeding = false;
+  let socialPending = false;
   /** Per-fish timestamp of our last accepted feed, for the local cooldown. */
   const lastFedAt = new Map();
 
@@ -86,6 +102,17 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
 
     secondary.hidden = !mine;
     secondary.textContent = t('fish.remove');
+    reactions.hidden = !viewer;
+    nudge.hidden = !viewer || mine;
+    nudge.textContent = t(socialPending ? 'fish.nudging' : 'fish.nudge');
+    nudge.disabled = socialPending;
+    for (const button of reactionButtons) {
+      button.disabled = socialPending;
+      button.setAttribute('aria-label', t('fish.reactAria', {
+        emoji: button.dataset.emoji,
+        name: fish.ownerName,
+      }));
+    }
 
     if (!viewer) {
       hint.textContent = t('fish.joinHint');
@@ -116,6 +143,37 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
     action.disabled = feeding || waiting > 0;
   }
 
+  async function react(fish, emoji) {
+    socialPending = true;
+    render();
+    try {
+      const response = await api.react(fish.id, emoji);
+      effects.show(response.effect);
+      track('fish_reaction_sent', { emoji, target_fish_id: fish.id });
+    } catch (err) {
+      toast(err instanceof ApiError ? apiErrorKey(err) : 'fish.reactionError', { tone: 'warn' });
+    } finally {
+      socialPending = false;
+      render();
+    }
+  }
+
+  async function hit(fish) {
+    socialPending = true;
+    render();
+    try {
+      const response = await api.hit(fish.id);
+      effects.show(response.effect);
+      track('fish_nudged', { target_fish_id: fish.id });
+      toast('fish.nudged', { tone: 'good', variables: { name: fish.ownerName } });
+    } catch (err) {
+      toast(err instanceof ApiError ? apiErrorKey(err) : 'fish.nudgeError', { tone: 'warn' });
+    } finally {
+      socialPending = false;
+      render();
+    }
+  }
+
   /** Anchor the card to its fish every frame so it tracks as the fish swims. */
   function reposition() {
     const fish = selectedFish();
@@ -130,7 +188,16 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
 
     const rect = card.getBoundingClientRect();
     const x = clamp(point.x - rect.width / 2, 8, innerWidth - rect.width - 8);
-    const y = clamp(point.y - rect.height - 46, 8, innerHeight - rect.height - 8);
+    const controlsBottom = Math.max(
+      document.querySelector('.language-selector')?.getBoundingClientRect().bottom ?? 0,
+      document.querySelector('.hud__right')?.getBoundingClientRect().bottom ?? 0,
+    );
+    const topInset = fishCardTopInset(innerWidth, innerHeight, controlsBottom);
+    const y = clamp(
+      point.y - rect.height - 46,
+      topInset,
+      innerHeight - rect.height - 8,
+    );
     card.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
     card.style.left = '0';
     card.style.top = '0';
@@ -190,6 +257,19 @@ export function createFishCard({ state, aquarium, onRequestJoin }) {
       return;
     }
     feed(fish);
+  });
+
+  reactions.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-emoji]');
+    const fish = selectedFish();
+    if (!button || !fish || socialPending || !state.get().viewer) return;
+    react(fish, button.dataset.emoji);
+  });
+
+  nudge.addEventListener('click', () => {
+    const fish = selectedFish();
+    if (!fish || socialPending) return;
+    hit(fish);
   });
 
   secondary.addEventListener('click', async () => {

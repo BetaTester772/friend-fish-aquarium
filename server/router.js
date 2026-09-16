@@ -12,6 +12,8 @@ import {
   tokenMatches,
 } from './gate.js';
 import { ACTIVITY_TYPES } from '../shared/activity-text.js';
+import { isReactionEmoji } from '../shared/social-interactions.js';
+import { newId } from './ids.js';
 import {
   randomLook,
   isBodyVariant,
@@ -54,6 +56,29 @@ export function createRouter({ store, realtime, random = Math.random }) {
     realtime.publish(tankId, 'presence.updated', {
       members: await store.members(tankId),
     });
+
+  async function emitFishEffect(fish, user, kind, extra = {}) {
+    const effect = {
+      id: newId('fx'),
+      kind,
+      fishId: fish.id,
+      actorId: user.id,
+      actorName: user.displayName,
+      ...extra,
+    };
+    await realtime.publish(fish.tankId, 'fish.effect', effect);
+    return effect;
+  }
+
+  async function interactionCooldown({ fish, user, type, cooldownMs, global = false }) {
+    const since = await store.msSinceInteraction({
+      tankId: fish.tankId,
+      actorUserId: user.id,
+      targetFishId: global ? null : fish.id,
+      type,
+    });
+    return since === null ? 0 : Math.max(0, cooldownMs - since);
+  }
 
   /** The client renders bars and cooldowns, so it needs the same thresholds. */
   const publicRules = () => ({
@@ -408,6 +433,88 @@ export function createRouter({ store, realtime, random = Math.random }) {
       }
 
       return json({ result: outcome.result, fish: updated });
+    })],
+
+    ['POST', '/api/fish/:fishId/reactions', requireUser(async ({ params, user, body }) => {
+      const fish = await store.fishById(params.fishId);
+      if (!fish) return json({ error: 'fish_not_found' }, 404);
+      if (!isReactionEmoji(body?.emoji)) {
+        return json({ error: 'invalid_reaction' }, 400);
+      }
+
+      const retryAfterMs = await interactionCooldown({
+        fish,
+        user,
+        type: 'reaction',
+        cooldownMs: config.social.reactionCooldownMs,
+      });
+      if (retryAfterMs > 0) {
+        return json({ error: 'interaction_cooldown', retryAfterMs }, 429);
+      }
+
+      await store.recordInteraction({
+        tankId: fish.tankId,
+        actorUserId: user.id,
+        targetFishId: fish.id,
+        type: 'reaction',
+        result: body.emoji,
+      });
+      return json({
+        ok: true,
+        effect: await emitFishEffect(fish, user, 'reaction', { emoji: body.emoji }),
+      });
+    })],
+
+    ['POST', '/api/fish/:fishId/hit', requireUser(async ({ params, user }) => {
+      const fish = await store.fishById(params.fishId);
+      if (!fish) return json({ error: 'fish_not_found' }, 404);
+      if (fish.ownerUserId === user.id) {
+        return json({ error: 'cannot_hit_self' }, 400);
+      }
+
+      const retryAfterMs = await interactionCooldown({
+        fish,
+        user,
+        type: 'hit',
+        cooldownMs: config.social.hitCooldownMs,
+      });
+      if (retryAfterMs > 0) {
+        return json({ error: 'interaction_cooldown', retryAfterMs }, 429);
+      }
+
+      await store.recordInteraction({
+        tankId: fish.tankId,
+        actorUserId: user.id,
+        targetFishId: fish.id,
+        type: 'hit',
+        result: 'accepted',
+      });
+      return json({ ok: true, effect: await emitFishEffect(fish, user, 'hit') });
+    })],
+
+    ['POST', '/api/fish/:fishId/catch', requireUser(async ({ params, user }) => {
+      const fish = await store.fishById(params.fishId);
+      if (!fish) return json({ error: 'fish_not_found' }, 404);
+
+      const retryAfterMs = await interactionCooldown({
+        fish,
+        user,
+        type: 'catch',
+        cooldownMs: config.social.catchCooldownMs,
+        global: true,
+      });
+      if (retryAfterMs > 0) {
+        return json({ error: 'interaction_cooldown', retryAfterMs }, 429);
+      }
+
+      await store.recordInteraction({
+        tankId: fish.tankId,
+        actorUserId: user.id,
+        targetFishId: fish.id,
+        type: 'catch',
+        result: 'caught',
+      });
+      return json({ ok: true, effect: await emitFishEffect(fish, user, 'catch') });
     })],
 
     /** Fire-and-forget product analytics (spec §11). */

@@ -288,6 +288,19 @@ export function createStore(db, { now = Date.now } = {}) {
       return row ? now() - row.created_at : null;
     },
 
+    async msSinceInteraction({ tankId, actorUserId, targetFishId = null, type }) {
+      const targetClause = targetFishId === null ? '' : ' AND target_fish_id = ?';
+      const params = [tankId, actorUserId, type];
+      if (targetFishId !== null) params.push(targetFishId);
+      const row = await db.get(
+        `SELECT created_at FROM interactions
+          WHERE tank_id = ? AND actor_user_id = ? AND type = ?${targetClause}
+          ORDER BY created_at DESC LIMIT 1`,
+        params,
+      );
+      return row ? now() - row.created_at : null;
+    },
+
     recordInteraction: ({ tankId, actorUserId, targetFishId, type, result }) =>
       db.run(
         `INSERT INTO interactions

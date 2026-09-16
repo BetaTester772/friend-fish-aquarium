@@ -46,6 +46,12 @@ export const config = {
     allowSelfFeed: true,
   },
 
+  social: {
+    reactionCooldownMs: 750,
+    hitCooldownMs: 5_000,
+    catchCooldownMs: 15_000,
+  },
+
   activity: {
     /** How many events the feed renders / the API returns by default (spec S5). */
     limit: 50,
