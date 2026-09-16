@@ -9,15 +9,30 @@ export function createFishing({ state, effects }) {
   const root = document.createElement('section');
   root.className = 'fishing';
 
-  const status = document.createElement('span');
+  const copy = document.createElement('div');
+  copy.className = 'fishing__copy';
+
+  const status = document.createElement('strong');
   status.className = 'fishing__status';
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn btn--primary btn--small fishing__button';
-  root.append(status, button);
+  const hint = document.createElement('span');
+  hint.className = 'fishing__hint';
+  copy.append(status, hint);
+
+  const rod = document.createElement('button');
+  rod.type = 'button';
+  rod.className = 'fishing__rod';
+  rod.innerHTML = `
+    <span class="fishing__rod-shaft" aria-hidden="true"></span>
+    <span class="fishing__line" aria-hidden="true"></span>
+    <span class="fishing__bobber" aria-hidden="true"></span>
+    <span class="fishing__rod-label"></span>
+  `;
+  const rodLabel = rod.querySelector('.fishing__rod-label');
+
+  root.append(copy, rod);
   document.body.append(root);
 
   let round = null;
@@ -46,9 +61,12 @@ export function createFishing({ state, effects }) {
     if (root.hidden) return;
 
     if (!round) {
+      root.dataset.phase = 'idle';
       status.textContent = t('fishing.idle');
-      button.textContent = t('fishing.cast');
-      button.disabled = false;
+      hint.textContent = t('fishing.idleHint');
+      rodLabel.textContent = t('fishing.cast');
+      rod.setAttribute('aria-label', t('fishing.castAria'));
+      rod.disabled = false;
       return;
     }
 
@@ -60,13 +78,16 @@ export function createFishing({ state, effects }) {
     }
 
     const phase = fishingPhase(round, Date.now());
+    root.dataset.phase = phase;
     status.textContent = phase === 'waiting'
       ? t('fishing.waiting', { name: fish.ownerName })
       : phase === 'bite'
         ? t('fishing.bite')
         : t('fishing.missed');
-    button.textContent = t(phase === 'bite' ? 'fishing.reel' : 'fishing.wait');
-    button.disabled = submitting || phase === 'missed';
+    hint.textContent = t(phase === 'bite' ? 'fishing.biteHint' : 'fishing.waitHint');
+    rodLabel.textContent = t(phase === 'bite' ? 'fishing.reel' : 'fishing.wait');
+    rod.setAttribute('aria-label', t(phase === 'bite' ? 'fishing.reelAria' : 'fishing.waitAria'));
+    rod.disabled = submitting || phase === 'missed';
   }
 
   function scheduleRender(delay) {
@@ -117,7 +138,7 @@ export function createFishing({ state, effects }) {
     }
   }
 
-  button.addEventListener('click', () => {
+  rod.addEventListener('click', () => {
     if (!round) cast();
     else reel();
   });

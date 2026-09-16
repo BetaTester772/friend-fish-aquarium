@@ -519,26 +519,154 @@ button {
   bottom: var(--safe-bottom);
   z-index: 6;
   display: flex;
-  align-items: center;
-  gap: 9px;
-  max-width: min(390px, calc(100vw - 28px));
-  padding: 6px 7px 6px 13px;
-  border-radius: var(--radius);
-  background: rgba(253, 253, 251, 0.9);
+  align-items: flex-end;
+  gap: 4px;
+  width: min(360px, calc(100vw - 28px));
+  pointer-events: none;
+}
+
+.fishing__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin-bottom: 7px;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: rgba(253, 253, 251, 0.92);
   box-shadow: var(--shadow);
 }
 
 .fishing__status {
   overflow: hidden;
-  color: var(--ink-soft);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fishing__button {
-  flex: none;
+.fishing__hint {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fishing__rod {
+  position: relative;
+  flex: 0 0 148px;
+  width: 148px;
+  height: 164px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.fishing__rod:disabled {
+  cursor: default;
+}
+
+.fishing__rod-shaft {
+  position: absolute;
+  right: 15px;
+  bottom: 34px;
+  width: 122px;
+  height: 9px;
+  border: 2px solid #55361f;
+  border-radius: 8px;
+  background: linear-gradient(#d99b45, #9a5b28);
+  box-shadow: 0 2px 0 rgba(16, 35, 46, 0.25);
+  transform: rotate(57deg);
+  transform-origin: right center;
+  transition: transform 0.12s ease;
+}
+
+.fishing__rod-shaft::after {
+  content: '';
+  position: absolute;
+  right: -13px;
+  top: -5px;
+  width: 24px;
+  height: 15px;
+  border-radius: 8px;
+  background: #4d6c7c;
+}
+
+.fishing__line {
+  position: absolute;
+  left: 67px;
+  top: 24px;
+  width: 1px;
+  height: 76px;
+  background: rgba(238, 248, 255, 0.92);
+  box-shadow: 1px 0 0 rgba(16, 35, 46, 0.2);
+  transform-origin: top;
+}
+
+.fishing__bobber {
+  position: absolute;
+  left: 60px;
+  top: 94px;
+  width: 15px;
+  height: 22px;
+  border: 2px solid rgba(16, 35, 46, 0.35);
+  border-radius: 50% 50% 46% 46%;
+  background: linear-gradient(to bottom, #fff 0 48%, #ef5b45 49% 100%);
+  box-shadow: 0 3px 0 rgba(16, 35, 46, 0.16);
+}
+
+.fishing__rod-label {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  min-width: 94px;
+  padding: 7px 11px;
+  border: 1px solid rgba(16, 35, 46, 0.18);
+  border-radius: var(--radius);
+  background: rgba(253, 253, 251, 0.94);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fishing__rod:hover:not(:disabled) .fishing__rod-shaft,
+.fishing__rod:focus-visible .fishing__rod-shaft {
+  transform: rotate(61deg);
+}
+
+.fishing[data-phase='waiting'] .fishing__line,
+.fishing[data-phase='waiting'] .fishing__bobber {
+  animation: fishing-wait 1.8s ease-in-out infinite;
+}
+
+.fishing[data-phase='bite'] .fishing__rod-shaft {
+  animation: fishing-tug 0.22s ease-in-out infinite alternate;
+}
+
+.fishing[data-phase='bite'] .fishing__line,
+.fishing[data-phase='bite'] .fishing__bobber {
+  animation: fishing-bite 0.2s ease-in-out infinite alternate;
+}
+
+.fishing[data-phase='bite'] .fishing__rod-label {
+  background: #fff19a;
+  transform: scale(1.06);
+}
+
+@keyframes fishing-wait {
+  50% { translate: 3px 2px; }
+}
+
+@keyframes fishing-bite {
+  to { translate: 0 13px; }
+}
+
+@keyframes fishing-tug {
+  to { transform: rotate(64deg); }
 }
 
 /* ---------------------------------------------------------- activity feed */
@@ -860,12 +988,17 @@ button {
 
   .fishing {
     bottom: calc(var(--safe-bottom) + 62px);
-    max-width: calc(100vw - 28px);
+    width: min(300px, calc(100vw - 28px));
   }
 
-  .fishing__status {
+  .fishing__copy {
+    margin-bottom: 2px;
+  }
+
+  .fishing__hint {
     display: none;
   }
+
 
   .hud__brand {
     padding: 6px 12px;
