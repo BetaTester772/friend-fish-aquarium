@@ -18,7 +18,7 @@ const POLL_INTERVAL_MS = 5_000;
  * a small friend group, and it means the tank always works even where SSE does
  * not.
  */
-export function connectRealtime({ state, tankId, heartbeatMs = 20_000 }) {
+export function connectRealtime({ state, tankId, heartbeatMs = 20_000, onFishEffect = () => {} }) {
   let source = null;
   let heartbeatTimer = null;
   let pollTimer = null;
@@ -77,6 +77,10 @@ export function connectRealtime({ state, tankId, heartbeatMs = 20_000 }) {
 
     source.addEventListener('presence.updated', (event) => {
       state.setMembers(JSON.parse(event.data).members);
+    });
+
+    source.addEventListener('fish.effect', (event) => {
+      onFishEffect(JSON.parse(event.data));
     });
   }
 
