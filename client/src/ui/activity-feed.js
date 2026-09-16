@@ -6,8 +6,7 @@ import {
   subscribeLocale,
   t,
 } from '../i18n.js';
-
-const VISIBLE = 6;
+import { activityItems, isNearBottom } from './activity-feed-state.js';
 
 /**
  * The pill stack from the Reel (spec S5): "beandog is here", "clare fed
@@ -20,16 +19,18 @@ export function createActivityFeed({ container, state }) {
   bindAttribute(container, 'aria-label', 'activity.label');
   const list = document.createElement('ul');
   list.className = 'activity__list';
+  list.setAttribute('aria-live', 'polite');
+  list.tabIndex = 0;
 
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'btn btn--ghost btn--small activity__toggle';
 
-  let expanded = false;
+  let visible = true;
   toggle.addEventListener('click', () => {
-    expanded = !expanded;
+    visible = !visible;
     render(state.get().activity);
-    if (expanded) {
+    if (visible) {
       track('activity_feed_viewed', {
         visible_event_count: state.get().activity.length,
       });
@@ -39,20 +40,29 @@ export function createActivityFeed({ container, state }) {
   container.append(toggle, list);
 
   function render(activity) {
-    const shown = expanded ? activity.slice(-40) : activity.slice(-VISIBLE);
+    const followNewest = !list.hidden && isNearBottom(list);
+    const shown = activityItems(activity, { visible });
 
     list.replaceChildren(
       ...(shown.length
         ? shown.map(renderEvent)
         : [emptyState()]),
     );
+    list.hidden = !visible;
 
-    toggle.textContent = expanded
+    toggle.textContent = visible
       ? t('activity.hide')
-      : t(activity.length > VISIBLE ? 'activity.titleCount' : 'activity.title', {
+      : t(activity.length ? 'activity.titleCount' : 'activity.title', {
           count: activity.length,
         });
-    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-expanded', String(visible));
+
+    if (visible && (followNewest || !list.dataset.rendered)) {
+      requestAnimationFrame(() => {
+        list.scrollTop = list.scrollHeight;
+      });
+    }
+    list.dataset.rendered = 'true';
   }
 
   function renderEvent(event) {
