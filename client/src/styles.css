@@ -520,6 +520,7 @@ button {
   z-index: 6;
   display: flex;
   align-items: flex-end;
+  justify-content: space-between;
   gap: 4px;
   width: min(360px, calc(100vw - 28px));
   pointer-events: none;
@@ -996,6 +997,14 @@ body:has(.fishing[data-layout='tablet']:not([hidden])) .activity {
 body:has(.fishing[data-layout='stacked']:not([hidden])) .activity {
   bottom: calc(var(--safe-bottom) + 236px);
   width: calc(100vw - 28px);
+}
+
+.fishing[data-layout='stacked'][data-dock='low'] {
+  bottom: var(--safe-bottom);
+}
+
+body:has(.fishing[data-layout='stacked'][data-dock='low']:not([hidden])) .activity {
+  bottom: calc(var(--safe-bottom) + 174px);
 }
 
 body:has(.fishing[data-layout='stacked']:not([hidden])) .activity__list {

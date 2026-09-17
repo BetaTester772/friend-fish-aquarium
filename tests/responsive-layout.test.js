@@ -18,3 +18,11 @@ test('fish cards stay below phone controls without wasting desktop space', () =>
   assert.equal(inset?.(768, 1024), 8);
   assert.equal(inset?.(390, 844, 131), 139);
 });
+
+test('phone controls sit low once the add-fish button no longer needs space', () => {
+  const dock = responsiveLayout.fishingDock;
+  assert.equal(dock?.(360, 640, { hasOwnFish: false }), 'raised');
+  assert.equal(dock?.(360, 640, { hasOwnFish: true }), 'low');
+  assert.equal(dock?.(412, 915, { hasOwnFish: true }), 'low');
+  assert.equal(dock?.(768, 1024, { hasOwnFish: true }), 'raised');
+});
