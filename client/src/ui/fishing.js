@@ -4,7 +4,7 @@ import {
   fishingPhase,
   reelFishing,
 } from '../fishing-game.js';
-import { responsiveFishingLayout } from '../responsive-layout.js';
+import { fishingDock, responsiveFishingLayout } from '../responsive-layout.js';
 import { apiErrorKey, subscribeLocale, t } from '../i18n.js';
 import { track } from '../analytics.js';
 import { toast } from './toast.js';
@@ -45,7 +45,12 @@ export function createFishing({ state, effects }) {
   let submitting = false;
 
   function renderLayout() {
+    const { viewer, fish } = state.get();
+    const hasOwnFish = Boolean(
+      viewer && fish.some((candidate) => candidate.ownerUserId === viewer.id),
+    );
     root.dataset.layout = responsiveFishingLayout(innerWidth, innerHeight);
+    root.dataset.dock = fishingDock(innerWidth, innerHeight, { hasOwnFish });
   }
 
   function eligibleFish() {
@@ -65,6 +70,7 @@ export function createFishing({ state, effects }) {
   }
 
   function render() {
+    renderLayout();
     const signedIn = Boolean(state.get().viewer);
     root.hidden = !signedIn || eligibleFish().length === 0;
     if (root.hidden) return;
@@ -159,7 +165,6 @@ export function createFishing({ state, effects }) {
   const stopFish = state.on('fish', render);
   const stopLocale = subscribeLocale(render);
   window.addEventListener('resize', renderLayout);
-  renderLayout();
   render();
 
   return {
