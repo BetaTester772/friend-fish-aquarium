@@ -37,7 +37,9 @@ export function createActivityFeed({ container, state }) {
     }
   });
 
-  container.append(toggle, list);
+  // Keep the control on the anchored bottom edge so opening the list grows
+  // upward instead of pushing the control around on narrow phone screens.
+  container.append(list, toggle);
 
   function render(activity) {
     const followNewest = !list.hidden && isNearBottom(list);

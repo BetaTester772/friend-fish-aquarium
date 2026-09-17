@@ -633,9 +633,10 @@ button {
   font-weight: 800;
 }
 
-.fishing__rod:hover:not(:disabled) .fishing__rod-shaft,
-.fishing__rod:focus-visible .fishing__rod-shaft {
-  transform: rotate(61deg);
+@media (hover: hover) and (pointer: fine) {
+  .fishing__rod:hover:not(:disabled) .fishing__rod-shaft {
+    transform: rotate(61deg);
+  }
 }
 
 .fishing[data-phase='waiting'] .fishing__line,

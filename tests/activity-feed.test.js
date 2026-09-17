@@ -29,3 +29,65 @@ test('auto-scroll follows new events only while the reader is near the bottom', 
     false,
   );
 });
+
+test('the activity toggle stays at the anchored edge when the list expands', async () => {
+  class ElementStub {
+    constructor(tagName) {
+      this.tagName = tagName;
+      this.children = [];
+      this.dataset = {};
+      this.className = '';
+      this.hidden = false;
+      this.isConnected = true;
+      this.scrollTop = 0;
+      this.clientHeight = 0;
+      this.scrollHeight = 0;
+    }
+
+    setAttribute(name, value) {
+      this[name] = value;
+    }
+
+    addEventListener() {}
+
+    append(...children) {
+      this.children.push(...children);
+    }
+
+    replaceChildren(...children) {
+      this.children = children;
+    }
+  }
+
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousAnimationFrame = globalThis.requestAnimationFrame;
+  globalThis.document = {
+    createElement: (tagName) => new ElementStub(tagName),
+    documentElement: {},
+    querySelector: () => null,
+    title: '',
+  };
+  globalThis.window = { addEventListener() {} };
+  globalThis.requestAnimationFrame = (callback) => callback();
+
+  const container = new ElementStub('section');
+  const state = {
+    get: () => ({ activity: [] }),
+    on: () => () => {},
+  };
+
+  try {
+    const { createActivityFeed } = await import('../client/src/ui/activity-feed.js');
+    const feed = createActivityFeed({ container, state });
+    assert.deepEqual(
+      container.children.map((child) => child.className),
+      ['activity__list', 'btn btn--ghost btn--small activity__toggle'],
+    );
+    feed.destroy();
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.requestAnimationFrame = previousAnimationFrame;
+  }
+});
